@@ -120,9 +120,6 @@ pub fn next_state(state: State, key: KeyCode) -> State {
         }
         (State::Confirm { .. }, KeyCode::Char('n') | KeyCode::Esc) => State::Cancelled,
 
-        // Done
-        (State::Done { .. }, KeyCode::Enter | KeyCode::Char('q')) => State::Cancelled, // exit
-
         (s, _) => s,
     }
 }
@@ -169,6 +166,14 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<O
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(KeyEvent { code, .. }) = event::read()? {
+                // Done: exit BEFORE calling next_state (which would transition to Cancelled)
+                if let State::Done { ref method, ref events } = state {
+                    return Ok(Some(InstallOptions {
+                        method: method.clone(),
+                        events: events.clone(),
+                    }));
+                }
+
                 // Capture method before leaving SelectMethod
                 if let State::SelectMethod { ref methods, cursor } = state {
                     if code == KeyCode::Enter {
@@ -176,21 +181,12 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<O
                     }
                 }
 
-                // Inject pending method into Confirm state
                 state = next_state(state, code);
+
+                // Inject the captured method into Confirm
                 if let State::Confirm { ref mut method, .. } = state {
                     if let Some(m) = pending_method.take() {
                         *method = m;
-                    }
-                }
-
-                // Done + any key → exit
-                if let State::Done { ref method, ref events } = state.clone() {
-                    if code == KeyCode::Enter || code == KeyCode::Char('q') {
-                        return Ok(Some(InstallOptions {
-                            method: method.clone(),
-                            events: events.clone(),
-                        }));
                     }
                 }
             }
@@ -243,21 +239,35 @@ fn render(f: &mut ratatui::Frame, state: &State) {
         State::SelectMethod { methods, cursor } => {
             let items: Vec<ListItem> = methods
                 .iter()
-                .map(|m| {
-                    let tag = if m.available() {
-                        Span::styled(" available ", Style::default().fg(Color::Green))
+                .enumerate()
+                .map(|(i, m)| {
+                    let selected = i == *cursor;
+                    let prefix = if selected { "❯ " } else { "  " };
+                    let name_style = if selected {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                     } else {
-                        Span::styled(" not found ", Style::default().fg(Color::DarkGray))
+                        Style::default()
+                    };
+                    let tag = if m.available() {
+                        Span::styled("[ok]", Style::default().fg(Color::Green))
+                    } else {
+                        Span::styled("[--]", Style::default().fg(Color::DarkGray))
+                    };
+                    let desc_style = if selected {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
                     };
                     ListItem::new(vec![
                         Line::from(vec![
-                            Span::styled(m.label(), Style::default().add_modifier(Modifier::BOLD)),
+                            Span::raw(prefix),
+                            Span::styled(m.label(), name_style),
                             Span::raw("  "),
                             tag,
                         ]),
                         Line::from(Span::styled(
-                            format!("  {}", m.description()),
-                            Style::default().fg(Color::DarkGray),
+                            format!("    {}", m.description()),
+                            desc_style,
                         )),
                         Line::from(""),
                     ])
@@ -268,7 +278,7 @@ fn render(f: &mut ratatui::Frame, state: &State) {
                 .block(Block::default().title(
                     "Notification method  (↑/↓ move  •  Enter select  •  q quit)",
                 ))
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+                .highlight_style(Style::default()); // styling handled per-item above
             let mut ls = ListState::default();
             ls.select(Some(*cursor));
             f.render_stateful_widget(list, content, &mut ls);
@@ -277,23 +287,34 @@ fn render(f: &mut ratatui::Frame, state: &State) {
         State::SelectEvents { events, cursor } => {
             let items: Vec<ListItem> = events
                 .iter()
-                .map(|e| {
+                .enumerate()
+                .map(|(i, e)| {
+                    let selected_row = i == *cursor;
+                    let prefix = if selected_row { "❯ " } else { "  " };
                     let check = if e.selected {
-                        Span::styled("[x] ", Style::default().fg(Color::Green))
+                        Span::styled("[x] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
                     } else {
                         Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
                     };
+                    let label_style = if selected_row {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    let desc_style = if selected_row {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
                     ListItem::new(vec![
                         Line::from(vec![
+                            Span::raw(prefix),
                             check,
-                            Span::styled(
-                                e.event.label(),
-                                Style::default().add_modifier(Modifier::BOLD),
-                            ),
+                            Span::styled(e.event.label(), label_style),
                         ]),
                         Line::from(Span::styled(
-                            format!("     {}", e.event.description()),
-                            Style::default().fg(Color::DarkGray),
+                            format!("       {}", e.event.description()),
+                            desc_style,
                         )),
                         Line::from(""),
                     ])
@@ -304,7 +325,7 @@ fn render(f: &mut ratatui::Frame, state: &State) {
                 .block(Block::default().title(
                     "Hook events  (↑/↓ move  •  Space toggle  •  Enter confirm  •  q quit)",
                 ))
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+                .highlight_style(Style::default()); // styling handled per-item above
             let mut ls = ListState::default();
             ls.select(Some(*cursor));
             f.render_stateful_widget(list, content, &mut ls);

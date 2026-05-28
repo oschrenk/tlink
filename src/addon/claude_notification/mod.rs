@@ -119,9 +119,28 @@ pub fn is_installed() -> bool {
 
 pub fn install() -> Result<()> {
     match wizard::run()? {
-        Some(opts) => install_with_options(&opts),
         None => {
             println!("Installation cancelled.");
+            Ok(())
+        }
+        Some(opts) => {
+            // TUI has exited — terminal is back to normal, safe to run brew.
+            if opts.method == NotifMethod::TerminalNotifier && !opts.method.available() {
+                println!("Installing terminal-notifier via Homebrew…");
+                let ok = std::process::Command::new("brew")
+                    .args(["install", "terminal-notifier"])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if !ok {
+                    eprintln!("warning: brew install terminal-notifier failed.");
+                    eprintln!("  Notifications will still work via osascript as fallback.");
+                }
+            }
+            install_with_options(&opts)?;
+            println!("✓ claude-notification installed.");
+            println!("  Hook:     {}", hook_script_path().display());
+            println!("  Settings: ~/.claude/settings.json");
             Ok(())
         }
     }
