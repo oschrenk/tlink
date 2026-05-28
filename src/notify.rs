@@ -5,8 +5,20 @@ use std::process::Command;
 
 #[derive(Deserialize, Default)]
 struct Payload {
+    hook_event_name:   Option<String>,
+    // Notification
     notification_type: Option<String>,
-    message: Option<String>,
+    message:           Option<String>,
+    // StopFailure
+    error_type:        Option<String>,
+    // Tool events
+    tool_name:         Option<String>,
+    // Agent events
+    agent_type:        Option<String>,
+    // Task events
+    task_title:        Option<String>,
+    // Session events
+    reason:            Option<String>,
 }
 
 fn type_to_title(t: &str) -> &'static str {
@@ -51,16 +63,57 @@ fn terminal_notifier_available() -> bool {
         .unwrap_or(false)
 }
 
+fn resolve(payload: &Payload) -> (String, String) {
+    match payload.hook_event_name.as_deref().unwrap_or("Notification") {
+        "Notification" => {
+            let t = payload.notification_type.as_deref().map(type_to_title).unwrap_or("Claude Code");
+            let m = payload.message.clone().unwrap_or_else(|| "Claude notification".into());
+            (t.into(), m)
+        }
+        "Stop" => (
+            "Claude finished".into(),
+            "Claude finished responding and is waiting for your input.".into(),
+        ),
+        "StopFailure" => (
+            "Claude error".into(),
+            format!("Turn failed: {}", payload.error_type.as_deref().unwrap_or("unknown error")),
+        ),
+        "PostToolUse" => (
+            "Tool completed".into(),
+            format!("{} finished", payload.tool_name.as_deref().unwrap_or("Tool")),
+        ),
+        "PostToolUseFailure" => (
+            "Tool failed".into(),
+            format!("{} error", payload.tool_name.as_deref().unwrap_or("Tool")),
+        ),
+        "SubagentStop" => (
+            "Subagent done".into(),
+            format!("{} subagent finished", payload.agent_type.as_deref().unwrap_or("A")),
+        ),
+        "TeammateIdle" => (
+            "Teammate idle".into(),
+            format!("{} is waiting for your input", payload.agent_type.as_deref().unwrap_or("Teammate")),
+        ),
+        "TaskCreated" => (
+            "Task created".into(),
+            payload.task_title.clone().unwrap_or_else(|| "New task".into()),
+        ),
+        "TaskCompleted" => ("Task complete".into(), "A task was marked as completed.".into()),
+        "SessionStart"  => ("Session started".into(), "A Claude Code session has started.".into()),
+        "SessionEnd"    => (
+            "Session ended".into(),
+            format!("Session ended: {}", payload.reason.as_deref().unwrap_or("unknown")),
+        ),
+        other => ("Claude Code".into(), format!("{} event", other)),
+    }
+}
+
 pub fn run(session: &str, window: &str, pane: &str) -> Result<()> {
     let mut stdin = String::new();
     std::io::stdin().read_to_string(&mut stdin)?;
 
     let payload: Payload = serde_json::from_str(&stdin).unwrap_or_default();
-    let message = payload.message.as_deref().unwrap_or("Claude notification");
-    let title   = payload.notification_type
-        .as_deref()
-        .map(type_to_title)
-        .unwrap_or("Claude Code");
+    let (title, message) = resolve(&payload);
 
     let deeplink = format!("tmux://{}/{}/{}", session, window, pane);
     let location = format!("{} > {} > {}", session, window, pane);
@@ -69,7 +122,7 @@ pub fn run(session: &str, window: &str, pane: &str) -> Result<()> {
     let method   = config.notification_method.as_deref().unwrap_or("osascript");
     let terminal = config.terminal.as_deref().unwrap_or("Ghostty");
 
-    fire(method, terminal, title, message, &location, &deeplink)
+    fire(method, terminal, &title, &message, &location, &deeplink)
 }
 
 fn fire(method: &str, terminal: &str, title: &str, message: &str, location: &str, deeplink: &str) -> Result<()> {

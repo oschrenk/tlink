@@ -23,6 +23,8 @@ pub enum State {
     SelectEvents {
         events: Vec<EventOpt>,
         cursor: usize,
+        search: String,
+        active_tab: usize, // 0 = All, 1..=N = category index
     },
     Confirm {
         method: NotifMethod,
@@ -47,40 +49,48 @@ pub struct EventOpt {
 
 impl EventOpt {
     fn all_events() -> Vec<Self> {
-        vec![
-            // Pre-checked: the two events users almost always want
-            Self {
-                event: HookEvent::IdlePrompt,
-                selected: true,
-            },
-            Self {
-                event: HookEvent::PermissionPrompt,
-                selected: true,
-            },
-            // Opt-in: lower signal or MCP-specific
-            Self {
-                event: HookEvent::AuthSuccess,
-                selected: false,
-            },
-            Self {
-                event: HookEvent::ElicitationDialog,
-                selected: false,
-            },
-            Self {
-                event: HookEvent::ElicitationComplete,
-                selected: false,
-            },
-            Self {
-                event: HookEvent::ElicitationResponse,
-                selected: false,
-            },
-            // Catch-all: overrides individual selections
-            Self {
-                event: HookEvent::All,
-                selected: false,
-            },
-        ]
+        use HookEvent::*;
+        // (event, default_selected)
+        let defs: &[(HookEvent, bool)] = &[
+            // Notifications
+            (NotificationIdle,            true),
+            (NotificationPermission,      true),
+            (NotificationAuth,            false),
+            (NotificationElicitDialog,    false),
+            (NotificationElicitComplete,  false),
+            (NotificationElicitResponse,  false),
+            (AllNotifications,            false),
+            // Turn
+            (Stop,                        true),
+            (StopFailure,                 false),
+            // Tools
+            (PostToolUse,                 false),
+            (PostToolUseFailure,          false),
+            // Agents & Tasks
+            (SubagentStop,                false),
+            (TeammateIdle,                false),
+            (TaskCreated,                 false),
+            (TaskCompleted,               false),
+            // Session
+            (SessionStart,                false),
+            (SessionEnd,                  false),
+        ];
+        defs.iter().map(|(e, s)| Self { event: e.clone(), selected: *s }).collect()
     }
+}
+
+pub const CATEGORIES: &[&str] = &["Notifications", "Turn", "Tools", "Agents & Tasks", "Session"];
+
+/// Returns the indices into `events` that are visible given the current tab and search query.
+pub fn visible_indices(events: &[EventOpt], search: &str, active_tab: usize) -> Vec<usize> {
+    let q = search.to_lowercase();
+    events.iter().enumerate().filter_map(|(i, e)| {
+        let tab_match = active_tab == 0 || CATEGORIES.get(active_tab - 1) == Some(&e.event.category());
+        let search_match = q.is_empty()
+            || e.event.label().to_lowercase().contains(&q)
+            || e.event.description().to_lowercase().contains(&q);
+        if tab_match && search_match { Some(i) } else { None }
+    }).collect()
 }
 
 pub fn next_state(state: State, key: KeyCode) -> State {
@@ -113,45 +123,54 @@ pub fn next_state(state: State, key: KeyCode) -> State {
         ) => State::SelectEvents {
             events: EventOpt::all_events(),
             cursor: 0,
+            search: String::new(),
+            active_tab: 0,
         },
         (State::SelectMethod { .. }, KeyCode::Char('q') | KeyCode::Esc) => State::Cancelled,
 
-        // SelectEvents — Space toggles, Enter confirms
-        (State::SelectEvents { events, cursor }, KeyCode::Up) => State::SelectEvents {
-            cursor: cursor.saturating_sub(1),
-            events,
-        },
-        (State::SelectEvents { events, cursor }, KeyCode::Down) => {
-            let max = events.len().saturating_sub(1);
-            State::SelectEvents {
-                cursor: (cursor + 1).min(max),
-                events,
-            }
+        // SelectEvents — Tab cycles categories, typing filters, Space toggles, Enter confirms
+        (State::SelectEvents { events, cursor, search, active_tab }, KeyCode::Tab) => {
+            let n_tabs = CATEGORIES.len() + 1; // 0 = All, 1..=N = category
+            let next_tab = (active_tab + 1) % n_tabs;
+            State::SelectEvents { events, cursor: 0, search: String::new(), active_tab: next_tab }
         }
-        (State::SelectEvents { mut events, cursor }, KeyCode::Char(' ')) => {
+        (State::SelectEvents { events, cursor, search, active_tab }, KeyCode::Up) => {
+            let visible = visible_indices(&events, &search, active_tab);
+            let pos = visible.iter().position(|&i| i == cursor).unwrap_or(0);
+            let new_cursor = visible.get(pos.saturating_sub(1)).copied().unwrap_or(cursor);
+            State::SelectEvents { events, cursor: new_cursor, search, active_tab }
+        }
+        (State::SelectEvents { events, cursor, search, active_tab }, KeyCode::Down) => {
+            let visible = visible_indices(&events, &search, active_tab);
+            let pos = visible.iter().position(|&i| i == cursor).unwrap_or(0);
+            let new_cursor = visible.get((pos + 1).min(visible.len().saturating_sub(1))).copied().unwrap_or(cursor);
+            State::SelectEvents { events, cursor: new_cursor, search, active_tab }
+        }
+        (State::SelectEvents { mut events, cursor, search, active_tab }, KeyCode::Char(' ')) => {
             events[cursor].selected = !events[cursor].selected;
-            State::SelectEvents { events, cursor }
+            State::SelectEvents { events, cursor, search, active_tab }
         }
-        (State::SelectEvents { events, .. }, KeyCode::Enter) => {
-            let selected: Vec<HookEvent> = events
-                .iter()
-                .filter(|e| e.selected)
-                .map(|e| e.event.clone())
-                .collect();
-            // Default to idle_prompt if nothing selected
-            let events_final = if selected.is_empty() {
-                vec![HookEvent::IdlePrompt]
-            } else {
-                selected
-            };
-            // We need the method from SelectMethod — but state machine lost it.
-            // Handled in event_loop which keeps pending_method.
-            State::Confirm {
-                method: NotifMethod::Osascript, // placeholder, replaced in event_loop
-                events: events_final,
+        (State::SelectEvents { events, search, active_tab, .. }, KeyCode::Enter) => {
+            if !search.is_empty() {
+                // Enter while searching: commit first visible match's toggle, clear search
+                return State::SelectEvents { events, cursor: 0, search: String::new(), active_tab };
             }
+            let selected: Vec<HookEvent> = events.iter().filter(|e| e.selected).map(|e| e.event.clone()).collect();
+            let events_final = if selected.is_empty() { vec![HookEvent::NotificationIdle] } else { selected };
+            State::Confirm { method: NotifMethod::Osascript, events: events_final }
         }
-        (State::SelectEvents { .. }, KeyCode::Char('q') | KeyCode::Esc) => State::Cancelled,
+        (State::SelectEvents { events, mut search, active_tab, cursor }, KeyCode::Backspace) => {
+            search.pop();
+            let new_cursor = visible_indices(&events, &search, active_tab).first().copied().unwrap_or(0);
+            State::SelectEvents { events, cursor: new_cursor, search, active_tab }
+        }
+        (State::SelectEvents { events, mut search, active_tab, cursor }, KeyCode::Char(c)) => {
+            search.push(c);
+            let visible = visible_indices(&events, &search, active_tab);
+            let new_cursor = if visible.contains(&cursor) { cursor } else { visible.first().copied().unwrap_or(cursor) };
+            State::SelectEvents { events, cursor: new_cursor, search, active_tab }
+        }
+        (State::SelectEvents { .. }, KeyCode::Esc) => State::Cancelled,
 
         // Confirm
         (State::Confirm { method, events }, KeyCode::Enter | KeyCode::Char('y')) => {
@@ -338,59 +357,90 @@ fn render(f: &mut ratatui::Frame, state: &State) {
             f.render_stateful_widget(list, content, &mut ls);
         }
 
-        State::SelectEvents { events, cursor } => {
-            let items: Vec<ListItem> = events
-                .iter()
+        State::SelectEvents { events, cursor, search, active_tab } => {
+            // Split content into tabs + list + search bar
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // tab bar
+                    Constraint::Fill(1),   // event list
+                    Constraint::Length(1), // search bar
+                ])
+                .split(content);
+
+            // ── Tab bar ───────────────────────────────────────────────────
+            let tab_spans: Vec<Span> = std::iter::once("All".to_string())
+                .chain(CATEGORIES.iter().map(|c| c.to_string()))
                 .enumerate()
-                .map(|(i, e)| {
-                    let selected_row = i == *cursor;
-                    let prefix = if selected_row { "❯ " } else { "  " };
-                    let check = if e.selected {
-                        Span::styled(
-                            "[x] ",
-                            Style::default()
-                                .fg(Color::Green)
-                                .add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
-                    };
-                    let label_style = if selected_row {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default()
-                    };
-                    let desc_style = if selected_row {
-                        Style::default().fg(Color::White)
+                .flat_map(|(i, label)| {
+                    let sty = if i == *active_tab {
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
                     } else {
                         Style::default().fg(Color::DarkGray)
                     };
-                    ListItem::new(vec![
-                        Line::from(vec![
-                            Span::raw(prefix),
-                            check,
-                            Span::styled(e.event.label(), label_style),
-                        ]),
-                        Line::from(Span::styled(
-                            format!("       {}", e.event.description()),
-                            desc_style,
-                        )),
-                        Line::from(""),
-                    ])
+                    [Span::styled(label, sty), Span::raw("  ")]
                 })
                 .collect();
+            f.render_widget(Paragraph::new(Line::from(tab_spans)), chunks[0]);
 
-            let list =
-                List::new(items)
-                    .block(Block::default().title(
-                        "Hook events  (↑/↓ move  •  Space toggle  •  Enter confirm  •  q quit)",
-                    ))
-                    .highlight_style(Style::default()); // styling handled per-item above
-            let mut ls = ListState::default();
-            ls.select(Some(*cursor));
-            f.render_stateful_widget(list, content, &mut ls);
+            // ── Event list ────────────────────────────────────────────────
+            let visible = visible_indices(events, search, *active_tab);
+            let mut lines: Vec<Line> = Vec::new();
+            let mut prev_cat = "";
+
+            for &i in &visible {
+                let e = &events[i];
+                // Show category header only in "All" tab
+                if *active_tab == 0 {
+                    let cat = e.event.category();
+                    if cat != prev_cat {
+                        if !lines.is_empty() { lines.push(Line::from("")); }
+                        lines.push(Line::from(Span::styled(
+                            format!(" {} ", cat),
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        )));
+                        prev_cat = cat;
+                    }
+                }
+                let on_cursor = i == *cursor;
+                let prefix = if on_cursor { "❯ " } else { "  " };
+                let check = if e.selected {
+                    Span::styled("[x] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                } else {
+                    Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
+                };
+                let label_sty = if on_cursor { Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD) } else { Style::default() };
+                let desc_sty  = if on_cursor { Style::default().fg(Color::White) } else { Style::default().fg(Color::DarkGray) };
+                lines.push(Line::from(vec![
+                    Span::raw(prefix), check,
+                    Span::styled(e.event.label(), label_sty),
+                    Span::raw("  "),
+                    Span::styled(e.event.description(), desc_sty),
+                ]));
+            }
+
+            if visible.is_empty() {
+                lines.push(Line::from(Span::styled("  no matches", Style::default().fg(Color::DarkGray))));
+            }
+
+            f.render_widget(
+                Paragraph::new(lines).block(Block::default().title(
+                    "↑/↓ move  •  Space toggle  •  Tab switch category  •  type to search  •  Enter confirm",
+                )),
+                chunks[1],
+            );
+
+            // ── Search bar ────────────────────────────────────────────────
+            let search_line = if search.is_empty() {
+                Line::from(Span::styled("  / search…", Style::default().fg(Color::DarkGray)))
+            } else {
+                Line::from(vec![
+                    Span::styled("  / ", Style::default().fg(Color::Yellow)),
+                    Span::styled(search.as_str(), Style::default().fg(Color::White)),
+                    Span::styled("█", Style::default().fg(Color::Cyan)), // cursor
+                ])
+            };
+            f.render_widget(Paragraph::new(search_line), chunks[2]);
         }
 
         State::Confirm { method, events } => {
@@ -481,6 +531,8 @@ mod tests {
         State::SelectEvents {
             events: EventOpt::all_events(),
             cursor: 0,
+            search: String::new(),
+            active_tab: 0,
         }
     }
 
@@ -543,77 +595,62 @@ mod tests {
 
     #[test]
     fn test_select_events_enter_collects_selected() {
-        let state = events_state(); // idle_prompt is selected by default
+        let state = events_state(); // NotificationIdle + NotificationPermission + Stop are on by default
         let next = next_state(state, KeyCode::Enter);
         if let State::Confirm { events, .. } = next {
-            assert!(events.contains(&HookEvent::IdlePrompt));
+            assert!(events.contains(&HookEvent::NotificationIdle));
         } else {
             panic!("expected Confirm");
         }
     }
 
     #[test]
-    fn test_select_events_defaults_idle_and_permission_prechecked() {
+    fn test_defaults_idle_permission_stop_checked() {
         let events = EventOpt::all_events();
-        assert!(
-            events
-                .iter()
-                .find(|e| e.event == HookEvent::IdlePrompt)
-                .unwrap()
-                .selected
-        );
-        assert!(
-            events
-                .iter()
-                .find(|e| e.event == HookEvent::PermissionPrompt)
-                .unwrap()
-                .selected
-        );
-        assert!(
-            !events
-                .iter()
-                .find(|e| e.event == HookEvent::All)
-                .unwrap()
-                .selected
-        );
+        let get = |ev: &HookEvent| events.iter().find(|e| &e.event == ev).unwrap().selected;
+        assert!(get(&HookEvent::NotificationIdle));
+        assert!(get(&HookEvent::NotificationPermission));
+        assert!(get(&HookEvent::Stop));
+        assert!(!get(&HookEvent::AllNotifications));
+        assert!(!get(&HookEvent::StopFailure));
     }
 
     #[test]
     fn test_select_events_enter_defaults_to_idle_when_none_selected() {
         let state = State::SelectEvents {
-            events: EventOpt::all_events()
-                .into_iter()
-                .map(|mut e| {
-                    e.selected = false;
-                    e
-                })
-                .collect(),
+            events: EventOpt::all_events().into_iter().map(|mut e| { e.selected = false; e }).collect(),
             cursor: 0,
+            search: String::new(),
+            active_tab: 0,
         };
         if let State::Confirm { events, .. } = next_state(state, KeyCode::Enter) {
-            assert_eq!(events, vec![HookEvent::IdlePrompt]);
+            assert_eq!(events, vec![HookEvent::NotificationIdle]);
         } else {
             panic!("expected Confirm");
         }
     }
 
     #[test]
-    fn test_all_six_notification_types_present() {
+    fn test_all_17_events_present() {
+        use HookEvent::*;
         let events = EventOpt::all_events();
         let types: Vec<&HookEvent> = events.iter().map(|e| &e.event).collect();
-        assert!(types.contains(&&HookEvent::IdlePrompt));
-        assert!(types.contains(&&HookEvent::PermissionPrompt));
-        assert!(types.contains(&&HookEvent::AuthSuccess));
-        assert!(types.contains(&&HookEvent::ElicitationDialog));
-        assert!(types.contains(&&HookEvent::ElicitationComplete));
-        assert!(types.contains(&&HookEvent::ElicitationResponse));
+        for expected in &[
+            NotificationIdle, NotificationPermission, NotificationAuth,
+            NotificationElicitDialog, NotificationElicitComplete, NotificationElicitResponse,
+            AllNotifications, Stop, StopFailure, PostToolUse, PostToolUseFailure,
+            SubagentStop, TeammateIdle, TaskCreated, TaskCompleted, SessionStart, SessionEnd,
+        ] {
+            assert!(types.contains(&expected), "missing {:?}", expected);
+        }
+        assert_eq!(events.len(), 17);
     }
 
     #[test]
     fn test_confirm_enter_goes_to_installing() {
         let state = State::Confirm {
             method: NotifMethod::Osascript,
-            events: vec![HookEvent::IdlePrompt],
+            events: vec![HookEvent::NotificationIdle],
         };
         assert!(matches!(
             next_state(state, KeyCode::Enter),
@@ -625,7 +662,7 @@ mod tests {
     fn test_confirm_n_cancels() {
         let state = State::Confirm {
             method: NotifMethod::Osascript,
-            events: vec![HookEvent::IdlePrompt],
+            events: vec![HookEvent::NotificationIdle],
         };
         assert!(matches!(
             next_state(state, KeyCode::Char('n')),

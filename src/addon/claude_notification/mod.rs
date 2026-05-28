@@ -77,58 +77,134 @@ impl NotifMethod {
     }
 }
 
-/// All notification_type values Claude Code can emit (as of current docs).
-/// Matcher is pipe-separated exact values; empty string matches all.
+/// All Claude Code hook events worth surfacing as desktop notifications.
+/// `event_key()` is the top-level key in settings.json hooks.
+/// `matcher()` is the filter within that key (empty = match all).
 #[derive(Clone, PartialEq, Debug)]
 pub enum HookEvent {
-    // ── High-signal (default on) ───────────────────────────────────────────
-    IdlePrompt,       // Claude finished and is waiting — most useful
-    PermissionPrompt, // Claude needs your approval to proceed
-    // ── Lower-signal (opt-in) ─────────────────────────────────────────────
-    AuthSuccess,         // Authentication token refreshed
-    ElicitationDialog,   // MCP server is asking you a question via Claude
-    ElicitationComplete, // MCP dialog interaction finished
-    ElicitationResponse, // Your response was submitted to the MCP server
-    // ── Catch-all ─────────────────────────────────────────────────────────
-    All,
+    // ── Notification sub-types (key: "Notification") ──────────────────────
+    NotificationIdle,            // idle_prompt
+    NotificationPermission,      // permission_prompt
+    NotificationAuth,            // auth_success
+    NotificationElicitDialog,    // elicitation_dialog
+    NotificationElicitComplete,  // elicitation_complete
+    NotificationElicitResponse,  // elicitation_response
+    AllNotifications,            // all Notification sub-types
+
+    // ── Turn lifecycle ────────────────────────────────────────────────────
+    Stop,        // Claude finished responding
+    StopFailure, // API error ended the turn
+
+    // ── Tool execution ────────────────────────────────────────────────────
+    PostToolUse,
+    PostToolUseFailure,
+
+    // ── Agents & Tasks ────────────────────────────────────────────────────
+    SubagentStop,
+    TeammateIdle,
+    TaskCreated,
+    TaskCompleted,
+
+    // ── Session ───────────────────────────────────────────────────────────
+    SessionStart,
+    SessionEnd,
 }
 
 impl HookEvent {
+    /// Top-level key in settings.json hooks object.
+    pub fn event_key(&self) -> &'static str {
+        match self {
+            Self::NotificationIdle
+            | Self::NotificationPermission
+            | Self::NotificationAuth
+            | Self::NotificationElicitDialog
+            | Self::NotificationElicitComplete
+            | Self::NotificationElicitResponse
+            | Self::AllNotifications       => "Notification",
+            Self::Stop                     => "Stop",
+            Self::StopFailure              => "StopFailure",
+            Self::PostToolUse              => "PostToolUse",
+            Self::PostToolUseFailure       => "PostToolUseFailure",
+            Self::SubagentStop             => "SubagentStop",
+            Self::TeammateIdle             => "TeammateIdle",
+            Self::TaskCreated              => "TaskCreated",
+            Self::TaskCompleted            => "TaskCompleted",
+            Self::SessionStart             => "SessionStart",
+            Self::SessionEnd               => "SessionEnd",
+        }
+    }
+
+    /// Matcher within the event key. Empty = match all instances.
+    pub fn matcher(&self) -> &'static str {
+        match self {
+            Self::NotificationIdle           => "idle_prompt",
+            Self::NotificationPermission     => "permission_prompt",
+            Self::NotificationAuth           => "auth_success",
+            Self::NotificationElicitDialog   => "elicitation_dialog",
+            Self::NotificationElicitComplete => "elicitation_complete",
+            Self::NotificationElicitResponse => "elicitation_response",
+            _                                => "", // match all for this event key
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
-            Self::IdlePrompt => "idle_prompt",
-            Self::PermissionPrompt => "permission_prompt",
-            Self::AuthSuccess => "auth_success",
-            Self::ElicitationDialog => "elicitation_dialog",
-            Self::ElicitationComplete => "elicitation_complete",
-            Self::ElicitationResponse => "elicitation_response",
-            Self::All => "all events",
+            Self::NotificationIdle           => "idle_prompt",
+            Self::NotificationPermission     => "permission_prompt",
+            Self::NotificationAuth           => "auth_success",
+            Self::NotificationElicitDialog   => "elicitation_dialog",
+            Self::NotificationElicitComplete => "elicitation_complete",
+            Self::NotificationElicitResponse => "elicitation_response",
+            Self::AllNotifications           => "all notifications",
+            Self::Stop                       => "Stop",
+            Self::StopFailure                => "StopFailure",
+            Self::PostToolUse                => "PostToolUse",
+            Self::PostToolUseFailure         => "PostToolUseFailure",
+            Self::SubagentStop               => "SubagentStop",
+            Self::TeammateIdle               => "TeammateIdle",
+            Self::TaskCreated                => "TaskCreated",
+            Self::TaskCompleted              => "TaskCompleted",
+            Self::SessionStart               => "SessionStart",
+            Self::SessionEnd                 => "SessionEnd",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            Self::IdlePrompt => "Claude finished a task and is waiting for your input",
-            Self::PermissionPrompt => "Claude needs your approval before running a tool",
-            Self::AuthSuccess => "Authentication token was refreshed",
-            Self::ElicitationDialog => "An MCP server is asking you a question via Claude",
-            Self::ElicitationComplete => "An MCP elicitation dialog finished",
-            Self::ElicitationResponse => "Your response was submitted to an MCP server",
-            Self::All => "Every notification Claude emits (all 6 types)",
+            Self::NotificationIdle           => "Claude finished a task and is waiting for you",
+            Self::NotificationPermission     => "Claude needs your approval before running a tool",
+            Self::NotificationAuth           => "Authentication token was refreshed",
+            Self::NotificationElicitDialog   => "An MCP server is asking you a question via Claude",
+            Self::NotificationElicitComplete => "An MCP elicitation dialog finished",
+            Self::NotificationElicitResponse => "Your response was submitted to an MCP server",
+            Self::AllNotifications           => "All 6 Notification sub-types",
+            Self::Stop                       => "Claude finished responding (good for long tasks)",
+            Self::StopFailure                => "Turn ended due to an API error",
+            Self::PostToolUse                => "A tool call completed successfully",
+            Self::PostToolUseFailure         => "A tool call failed",
+            Self::SubagentStop               => "A subagent finished its work",
+            Self::TeammateIdle               => "A teammate agent is waiting for your input",
+            Self::TaskCreated                => "A new task was created via TaskCreate",
+            Self::TaskCompleted              => "A task was marked as completed",
+            Self::SessionStart               => "A Claude Code session started or resumed",
+            Self::SessionEnd                 => "A Claude Code session ended",
         }
     }
 
-    /// Returns the matcher string for settings.json. Pipe-separated for multi-event.
-    /// Empty string matches all notification types.
-    pub fn matcher(&self) -> &'static str {
+    pub fn category(&self) -> &'static str {
         match self {
-            Self::IdlePrompt => "idle_prompt",
-            Self::PermissionPrompt => "permission_prompt",
-            Self::AuthSuccess => "auth_success",
-            Self::ElicitationDialog => "elicitation_dialog",
-            Self::ElicitationComplete => "elicitation_complete",
-            Self::ElicitationResponse => "elicitation_response",
-            Self::All => "",
+            Self::NotificationIdle
+            | Self::NotificationPermission
+            | Self::NotificationAuth
+            | Self::NotificationElicitDialog
+            | Self::NotificationElicitComplete
+            | Self::NotificationElicitResponse
+            | Self::AllNotifications    => "Notifications",
+            Self::Stop | Self::StopFailure => "Turn",
+            Self::PostToolUse | Self::PostToolUseFailure => "Tools",
+            Self::SubagentStop | Self::TeammateIdle
+            | Self::TaskCreated | Self::TaskCompleted => "Agents & Tasks",
+            Self::SessionStart | Self::SessionEnd => "Session",
         }
     }
 }
@@ -210,26 +286,56 @@ pub fn install_with_options(opts: &InstallOptions) -> Result<()> {
         .args(["+x", script.to_str().unwrap()])
         .status()?;
 
-    // Persist chosen method so `tlink notify` knows which tool to use.
     let mut config = crate::config::load().unwrap_or_default();
     config.notification_method = Some(opts.method.config_key().to_string());
     crate::config::save(&config)?;
 
-    let matcher = build_matcher(&opts.events);
-    register_hook(script.to_str().unwrap(), &matcher)?;
+    // Group selected events by their settings.json key and register each group.
+    for (event_key, matcher) in build_registrations(&opts.events) {
+        register_hook_entry(&event_key, script.to_str().unwrap(), &matcher)?;
+    }
 
     Ok(())
 }
 
-fn build_matcher(events: &[HookEvent]) -> String {
-    if events.iter().any(|e| *e == HookEvent::All) {
-        return String::new();
+/// Groups events by event_key. Within each key, Notification sub-type matchers
+/// are pipe-joined; an empty matcher (match-all) overrides specific ones.
+fn build_registrations(events: &[HookEvent]) -> Vec<(String, String)> {
+    use std::collections::BTreeMap;
+
+    // BTreeMap<event_key, Option<Vec<matcher>>>
+    // None  = match-all (empty matcher string)
+    // Some  = list of specific matchers to pipe-join
+    let mut map: BTreeMap<&str, Option<Vec<&str>>> = BTreeMap::new();
+
+    for event in events {
+        let key     = event.event_key();
+        let matcher = event.matcher();
+
+        match map.entry(key) {
+            std::collections::btree_map::Entry::Vacant(e) => {
+                if matcher.is_empty() {
+                    e.insert(None);
+                } else {
+                    e.insert(Some(vec![matcher]));
+                }
+            }
+            std::collections::btree_map::Entry::Occupied(mut e) => {
+                if matcher.is_empty() {
+                    *e.get_mut() = None; // upgrade to match-all
+                } else if let Some(ref mut v) = e.get_mut() {
+                    if !v.contains(&matcher) {
+                        v.push(matcher);
+                    }
+                }
+                // already None (match-all) → keep as is
+            }
+        }
     }
-    events
-        .iter()
-        .map(|e| e.matcher())
-        .collect::<Vec<_>>()
-        .join("|")
+
+    map.into_iter()
+        .map(|(k, v)| (k.to_string(), v.map_or(String::new(), |ms| ms.join("|"))))
+        .collect()
 }
 
 /// Thin bash wrapper — captures tmux context, delegates JSON parsing and
@@ -327,7 +433,7 @@ LOCATION="${{SESSION}} > ${{WINDOW}} > ${{PANE}}"
     )
 }
 
-fn register_hook(script_path: &str, matcher: &str) -> Result<()> {
+fn register_hook_entry(event_key: &str, script_path: &str, matcher: &str) -> Result<()> {
     let path = claude_settings_path();
     let content = if path.exists() {
         std::fs::read_to_string(&path)?
@@ -341,21 +447,23 @@ fn register_hook(script_path: &str, matcher: &str) -> Result<()> {
     let mut settings: serde_json::Value =
         serde_json::from_str(&content).context("~/.claude/settings.json is not valid JSON")?;
 
-    if settings["hooks"]["Notification"].as_array().is_none() {
-        settings["hooks"]["Notification"] = serde_json::json!([]);
+    if !settings["hooks"].is_object() {
+        settings["hooks"] = serde_json::json!({});
     }
 
-    let arr = settings["hooks"]["Notification"].as_array_mut().unwrap();
-    arr.retain(|e| {
-        !e["hooks"][0]["command"]
-            .as_str()
-            .unwrap_or("")
-            .contains("claude-notification")
-    });
-    arr.push(serde_json::json!({
-        "matcher": matcher,
-        "hooks": [{ "type": "command", "command": script_path }]
-    }));
+    {
+        let hooks_obj = settings["hooks"].as_object_mut().unwrap();
+        let arr = hooks_obj
+            .entry(event_key)
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(v) = arr.as_array_mut() {
+            v.retain(|e| !is_tlink_hook(e));
+            v.push(serde_json::json!({
+                "matcher": matcher,
+                "hooks": [{ "type": "command", "command": script_path }]
+            }));
+        }
+    }
 
     std::fs::write(&path, serde_json::to_string_pretty(&settings)?)?;
     Ok(())
@@ -370,16 +478,24 @@ fn deregister_hook() -> Result<()> {
     let mut settings: serde_json::Value =
         serde_json::from_str(&content).context("~/.claude/settings.json is not valid JSON")?;
 
-    if let Some(arr) = settings["hooks"]["Notification"].as_array_mut() {
-        arr.retain(|e| {
-            !e["hooks"][0]["command"]
-                .as_str()
-                .unwrap_or("")
-                .contains("claude-notification")
-        });
+    // Remove tlink entries from ALL event keys, not just Notification.
+    if let Some(hooks) = settings["hooks"].as_object_mut() {
+        for arr_val in hooks.values_mut() {
+            if let Some(arr) = arr_val.as_array_mut() {
+                arr.retain(|e| !is_tlink_hook(e));
+            }
+        }
     }
+
     std::fs::write(&path, serde_json::to_string_pretty(&settings)?)?;
     Ok(())
+}
+
+fn is_tlink_hook(e: &serde_json::Value) -> bool {
+    e["hooks"][0]["command"]
+        .as_str()
+        .unwrap_or("")
+        .contains("claude-notification")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -446,27 +562,38 @@ mod tests {
     }
 
     #[test]
-    fn test_build_matcher_single_event() {
-        let m = build_matcher(&[HookEvent::IdlePrompt]);
-        assert_eq!(m, "idle_prompt");
+    fn test_build_registrations_single_notification() {
+        let r = build_registrations(&[HookEvent::NotificationIdle]);
+        assert_eq!(r, vec![("Notification".to_string(), "idle_prompt".to_string())]);
     }
 
     #[test]
-    fn test_build_matcher_multiple_events() {
-        let m = build_matcher(&[HookEvent::IdlePrompt, HookEvent::PermissionPrompt]);
-        assert_eq!(m, "idle_prompt|permission_prompt");
+    fn test_build_registrations_multiple_notification_sub_types() {
+        let r = build_registrations(&[HookEvent::NotificationIdle, HookEvent::NotificationPermission]);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "Notification");
+        assert!(r[0].1.contains("idle_prompt"));
+        assert!(r[0].1.contains("permission_prompt"));
     }
 
     #[test]
-    fn test_build_matcher_all_events_is_empty() {
-        let m = build_matcher(&[HookEvent::All]);
-        assert_eq!(m, "");
+    fn test_build_registrations_all_notifications_overrides() {
+        let r = build_registrations(&[HookEvent::NotificationIdle, HookEvent::AllNotifications]);
+        assert_eq!(r, vec![("Notification".to_string(), String::new())]);
     }
 
     #[test]
-    fn test_build_matcher_all_overrides_specifics() {
-        // If All is in the list, matcher is empty regardless
-        let m = build_matcher(&[HookEvent::IdlePrompt, HookEvent::All]);
-        assert_eq!(m, "");
+    fn test_build_registrations_cross_event_keys() {
+        let r = build_registrations(&[HookEvent::NotificationIdle, HookEvent::Stop]);
+        assert_eq!(r.len(), 2);
+        let keys: Vec<&str> = r.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"Notification"));
+        assert!(keys.contains(&"Stop"));
+    }
+
+    #[test]
+    fn test_build_registrations_stop_has_empty_matcher() {
+        let r = build_registrations(&[HookEvent::Stop]);
+        assert_eq!(r, vec![("Stop".to_string(), String::new())]);
     }
 }
