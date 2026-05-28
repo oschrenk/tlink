@@ -27,21 +27,36 @@ brew install tmux   # if not already installed
 
 ### Download binary (recommended)
 
+**macOS**
 ```bash
-# Detect architecture and install
-ARCH=$(uname -m)
-[ "$ARCH" = "arm64" ] && ARCH="aarch64"
+ARCH=$(uname -m); [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 curl -fsSL "https://github.com/ahnopologetic/tlink/releases/latest/download/tlink-${ARCH}-apple-darwin" \
-  -o /usr/local/bin/tlink
-chmod +x /usr/local/bin/tlink
+  -o /usr/local/bin/tlink && chmod +x /usr/local/bin/tlink
+```
+
+**Linux**
+```bash
+ARCH=$(uname -m)
+[ "$ARCH" = "aarch64" ] && ARCH="aarch64" || ARCH="x86_64"
+# Use -musl for static binaries (Alpine, containers, no glibc dependency)
+VARIANT="gnu"   # or "musl"
+curl -fsSL "https://github.com/ahnopologetic/tlink/releases/latest/download/tlink-${ARCH}-unknown-linux-${VARIANT}" \
+  -o /usr/local/bin/tlink && chmod +x /usr/local/bin/tlink
 ```
 
 Or download manually from [Releases](https://github.com/ahnopologetic/tlink/releases/latest):
 
-| Architecture | File |
-|---|---|
-| Apple Silicon (M1/M2/M3) | `tlink-aarch64-apple-darwin` |
-| Intel | `tlink-x86_64-apple-darwin` |
+| Platform | Architecture | File |
+|---|---|---|
+| macOS | Apple Silicon (M1/M2/M3) | `tlink-aarch64-apple-darwin` |
+| macOS | Intel | `tlink-x86_64-apple-darwin` |
+| Linux | x86_64 (glibc) | `tlink-x86_64-unknown-linux-gnu` |
+| Linux | x86_64 (musl / static) | `tlink-x86_64-unknown-linux-musl` |
+| Linux | ARM64 (glibc) | `tlink-aarch64-unknown-linux-gnu` |
+| Linux | ARM64 (musl / static) | `tlink-aarch64-unknown-linux-musl` |
+| Linux | ARMv7 32-bit | `tlink-armv7-unknown-linux-gnueabihf` |
+
+> **Linux note:** URI scheme registration (`tlink setup`, `tlink restart`) and terminal focus are macOS-only. On Linux, `tlink open` (tmux navigation) and the status-bar toast work as-is.
 
 ### Build from source
 

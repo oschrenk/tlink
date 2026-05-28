@@ -15,10 +15,38 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest   # arm64 runner (macos-14+)
+          # macOS — native runners
+          - os: macos-latest   # arm64 (macos-14+)
             target: aarch64-apple-darwin
-          - os: macos-13       # x86_64 runner
+            use_cross: false
+          - os: macos-13       # x86_64
             target: x86_64-apple-darwin
+            use_cross: false
+
+          # Linux x86_64 — native runner
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            use_cross: false
+
+          # Linux x86_64 musl (static, Alpine / containers)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            use_cross: true
+
+          # Linux ARM64 (AWS Graviton, RPi 4+, cloud ARM)
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            use_cross: true
+
+          # Linux ARM64 musl (static ARM64)
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            use_cross: true
+
+          # Linux ARMv7 (Raspberry Pi 2/3, 32-bit ARM)
+          - os: ubuntu-latest
+            target: armv7-unknown-linux-gnueabihf
+            use_cross: true
 
     steps:
       - uses: actions/checkout@v4
@@ -31,12 +59,17 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build
+        run: ${{ matrix.use_cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
 
       - name: Stage artifact
-        run: |
-          cp target/${{ matrix.target }}/release/tlink tlink-${{ matrix.target }}
+        run: cp target/${{ matrix.target }}/release/tlink tlink-${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -67,5 +100,10 @@ jobs:
           files: |
             artifacts/tlink-aarch64-apple-darwin
             artifacts/tlink-x86_64-apple-darwin
+            artifacts/tlink-x86_64-unknown-linux-gnu
+            artifacts/tlink-x86_64-unknown-linux-musl
+            artifacts/tlink-aarch64-unknown-linux-gnu
+            artifacts/tlink-aarch64-unknown-linux-musl
+            artifacts/tlink-armv7-unknown-linux-gnueabihf
             artifacts/checksums.txt
           generate_release_notes: true
