@@ -29,18 +29,21 @@ brew install tmux   # if not already installed
 
 **macOS**
 ```bash
+VERSION=v0.1.0
 ARCH=$(uname -m); [ "$ARCH" = "arm64" ] && ARCH="aarch64"
-curl -fsSL "https://github.com/ahnopologetic/tlink/releases/latest/download/tlink-${ARCH}-apple-darwin" \
+curl -fsSL "https://github.com/ahnopologetic/tlink/releases/download/${VERSION}/tlink-${ARCH}-apple-darwin" \
   -o /usr/local/bin/tlink && chmod +x /usr/local/bin/tlink
 ```
 
 **Linux**
 ```bash
-ARCH=$(uname -m)
-[ "$ARCH" = "aarch64" ] && ARCH="aarch64" || ARCH="x86_64"
-# Use -musl for static binaries (Alpine, containers, no glibc dependency)
+VERSION=v0.1.0
+ARCH=$(uname -m); [ "$ARCH" = "armv7l" ] && ARCH="armv7"
+# Use musl for static binaries (Alpine, containers, no glibc dependency)
 VARIANT="gnu"   # or "musl"
-curl -fsSL "https://github.com/ahnopologetic/tlink/releases/latest/download/tlink-${ARCH}-unknown-linux-${VARIANT}" \
+[ "$ARCH" = "armv7" ] && SUFFIX="armv7-unknown-linux-gnueabihf" \
+  || SUFFIX="${ARCH}-unknown-linux-${VARIANT}"
+curl -fsSL "https://github.com/ahnopologetic/tlink/releases/download/${VERSION}/tlink-${SUFFIX}" \
   -o /usr/local/bin/tlink && chmod +x /usr/local/bin/tlink
 ```
 
