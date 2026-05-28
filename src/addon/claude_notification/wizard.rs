@@ -74,18 +74,18 @@ pub fn next_state(state: State, key: KeyCode) -> State {
             let max = methods.len().saturating_sub(1);
             State::SelectMethod { methods, cursor: (cursor + 1).min(max) }
         }
-        (State::SelectMethod { methods, cursor }, KeyCode::Enter) => State::SelectEvents {
+        (State::SelectMethod { methods: _, cursor: _ }, KeyCode::Enter) => State::SelectEvents {
             events: EventOpt::all_events(),
             cursor: 0,
         },
         (State::SelectMethod { .. }, KeyCode::Char('q') | KeyCode::Esc) => State::Cancelled,
 
         // SelectEvents — Space toggles, Enter confirms
-        (State::SelectEvents { mut events, cursor }, KeyCode::Up) => State::SelectEvents {
+        (State::SelectEvents { events, cursor }, KeyCode::Up) => State::SelectEvents {
             cursor: cursor.saturating_sub(1),
             events,
         },
-        (State::SelectEvents { mut events, cursor }, KeyCode::Down) => {
+        (State::SelectEvents { events, cursor }, KeyCode::Down) => {
             let max = events.len().saturating_sub(1);
             State::SelectEvents { cursor: (cursor + 1).min(max), events }
         }
