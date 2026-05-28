@@ -17,33 +17,54 @@ impl NotifMethod {
     pub fn label(&self) -> &'static str {
         match self {
             Self::TerminalNotifier => "terminal-notifier",
-            Self::Osascript        => "osascript (built-in)",
-            Self::Dunstify         => "dunstify",
-            Self::NotifySend       => "notify-send",
+            Self::Osascript => "osascript (built-in)",
+            Self::Dunstify => "dunstify",
+            Self::NotifySend => "notify-send",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            Self::TerminalNotifier => "Click notification to jump back — requires: brew install terminal-notifier",
-            Self::Osascript        => "System alert, no click action — always available on macOS",
-            Self::Dunstify         => "Click notification to jump back — requires: dunst daemon",
-            Self::NotifySend       => "Desktop notification, no click action — requires: libnotify",
+            Self::TerminalNotifier => {
+                "Click notification to jump back — requires: brew install terminal-notifier"
+            }
+            Self::Osascript => "System alert, no click action — always available on macOS",
+            Self::Dunstify => "Click notification to jump back — requires: dunst daemon",
+            Self::NotifySend => "Desktop notification, no click action — requires: libnotify",
         }
     }
 
     pub fn available(&self) -> bool {
         let cmd = match self {
             Self::TerminalNotifier => "terminal-notifier",
-            Self::Osascript        => "osascript",
-            Self::Dunstify         => "dunstify",
-            Self::NotifySend       => "notify-send",
+            Self::Osascript => "osascript",
+            Self::Dunstify => "dunstify",
+            Self::NotifySend => "notify-send",
         };
         std::process::Command::new("which")
             .arg(cmd)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+    }
+
+    pub fn config_key(&self) -> &'static str {
+        match self {
+            Self::TerminalNotifier => "terminal-notifier",
+            Self::Osascript        => "osascript",
+            Self::Dunstify         => "dunstify",
+            Self::NotifySend       => "notify-send",
+        }
+    }
+
+    pub fn from_config_key(key: &str) -> Option<Self> {
+        match key {
+            "terminal-notifier" => Some(Self::TerminalNotifier),
+            "osascript"         => Some(Self::Osascript),
+            "dunstify"          => Some(Self::Dunstify),
+            "notify-send"       => Some(Self::NotifySend),
+            _                   => None,
+        }
     }
 
     pub fn platform_methods() -> Vec<Self> {
@@ -60,13 +81,13 @@ impl NotifMethod {
 #[derive(Clone, PartialEq, Debug)]
 pub enum HookEvent {
     // ── High-signal (default on) ───────────────────────────────────────────
-    IdlePrompt,        // Claude finished and is waiting — most useful
-    PermissionPrompt,  // Claude needs your approval to proceed
+    IdlePrompt,       // Claude finished and is waiting — most useful
+    PermissionPrompt, // Claude needs your approval to proceed
     // ── Lower-signal (opt-in) ─────────────────────────────────────────────
-    AuthSuccess,             // Authentication token refreshed
-    ElicitationDialog,       // MCP server is asking you a question via Claude
-    ElicitationComplete,     // MCP dialog interaction finished
-    ElicitationResponse,     // Your response was submitted to the MCP server
+    AuthSuccess,         // Authentication token refreshed
+    ElicitationDialog,   // MCP server is asking you a question via Claude
+    ElicitationComplete, // MCP dialog interaction finished
+    ElicitationResponse, // Your response was submitted to the MCP server
     // ── Catch-all ─────────────────────────────────────────────────────────
     All,
 }
@@ -74,25 +95,25 @@ pub enum HookEvent {
 impl HookEvent {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::IdlePrompt          => "idle_prompt",
-            Self::PermissionPrompt    => "permission_prompt",
-            Self::AuthSuccess         => "auth_success",
-            Self::ElicitationDialog   => "elicitation_dialog",
+            Self::IdlePrompt => "idle_prompt",
+            Self::PermissionPrompt => "permission_prompt",
+            Self::AuthSuccess => "auth_success",
+            Self::ElicitationDialog => "elicitation_dialog",
             Self::ElicitationComplete => "elicitation_complete",
             Self::ElicitationResponse => "elicitation_response",
-            Self::All                 => "all events",
+            Self::All => "all events",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            Self::IdlePrompt          => "Claude finished a task and is waiting for your input",
-            Self::PermissionPrompt    => "Claude needs your approval before running a tool",
-            Self::AuthSuccess         => "Authentication token was refreshed",
-            Self::ElicitationDialog   => "An MCP server is asking you a question via Claude",
+            Self::IdlePrompt => "Claude finished a task and is waiting for your input",
+            Self::PermissionPrompt => "Claude needs your approval before running a tool",
+            Self::AuthSuccess => "Authentication token was refreshed",
+            Self::ElicitationDialog => "An MCP server is asking you a question via Claude",
             Self::ElicitationComplete => "An MCP elicitation dialog finished",
             Self::ElicitationResponse => "Your response was submitted to an MCP server",
-            Self::All                 => "Every notification Claude emits (all 6 types)",
+            Self::All => "Every notification Claude emits (all 6 types)",
         }
     }
 
@@ -100,13 +121,13 @@ impl HookEvent {
     /// Empty string matches all notification types.
     pub fn matcher(&self) -> &'static str {
         match self {
-            Self::IdlePrompt          => "idle_prompt",
-            Self::PermissionPrompt    => "permission_prompt",
-            Self::AuthSuccess         => "auth_success",
-            Self::ElicitationDialog   => "elicitation_dialog",
+            Self::IdlePrompt => "idle_prompt",
+            Self::PermissionPrompt => "permission_prompt",
+            Self::AuthSuccess => "auth_success",
+            Self::ElicitationDialog => "elicitation_dialog",
             Self::ElicitationComplete => "elicitation_complete",
             Self::ElicitationResponse => "elicitation_response",
-            Self::All                 => "",
+            Self::All => "",
         }
     }
 }
@@ -183,10 +204,15 @@ pub fn install_with_options(opts: &InstallOptions) -> Result<()> {
         std::fs::create_dir_all(p)?;
     }
 
-    std::fs::write(&script, generate_hook_script(&opts.method))?;
+    std::fs::write(&script, hook_script())?;
     std::process::Command::new("chmod")
         .args(["+x", script.to_str().unwrap()])
         .status()?;
+
+    // Persist chosen method so `tlink notify` knows which tool to use.
+    let mut config = crate::config::load().unwrap_or_default();
+    config.notification_method = Some(opts.method.config_key().to_string());
+    crate::config::save(&config)?;
 
     let matcher = build_matcher(&opts.events);
     register_hook(script.to_str().unwrap(), &matcher)?;
@@ -205,32 +231,59 @@ fn build_matcher(events: &[HookEvent]) -> String {
         .join("|")
 }
 
+/// Thin bash wrapper — captures tmux context, delegates JSON parsing and
+/// notification firing entirely to `tlink notify` (Rust).
+pub fn hook_script() -> &'static str {
+    r##"#!/bin/bash
+SESSION=$(tmux display-message -p "#{session_name}" 2>/dev/null) || exit 0
+WINDOW=$(tmux display-message -p "#{window_name}" 2>/dev/null) || exit 0
+PANE=$(tmux display-message -p "#{pane_index}" 2>/dev/null) || exit 0
+[ -z "$SESSION" ] && exit 0
+exec tlink notify --session "$SESSION" --window "$WINDOW" --pane "$PANE"
+"##
+}
+
+#[deprecated(note = "use hook_script() — method is now stored in config and handled by tlink notify")]
 pub fn generate_hook_script(method: &NotifMethod) -> String {
+    // DEEPLINK is only passed to the click action (-execute / tlink open),
+    // never shown as visible notification text.
     let notify_block = match method {
-        NotifMethod::TerminalNotifier => r##"    terminal-notifier \
-        -title "Claude Code" \
+        NotifMethod::TerminalNotifier => {
+            r##"    terminal-notifier \
+        -title "$NOTIF_TITLE" \
         -subtitle "$LOCATION" \
         -message "$MESSAGE" \
-        -execute "tlink open '$DEEPLINK'" &"##,
+        -execute "tlink open $DEEPLINK" &"##
+        }
 
-        NotifMethod::Osascript => r##"    osascript -e "display notification \"$MESSAGE\" with title \"Claude Code\" subtitle \"$LOCATION\" sound name \"Glass\""
-"##,
+        NotifMethod::Osascript => {
+            r##"    osascript -e "display notification \"$MESSAGE\" with title \"$NOTIF_TITLE\" subtitle \"$LOCATION\" sound name \"Glass\""
+"##
+        }
 
-        NotifMethod::Dunstify => r##"    (
-        ACTION=$(dunstify "Claude Code — $LOCATION" "$MESSAGE" \
+        NotifMethod::Dunstify => {
+            r##"    (
+        ACTION=$(dunstify "$NOTIF_TITLE" "$MESSAGE" \
+            --hint=string:x-dunst-stack-tag:tlink \
             --action="default,Go there" \
             --urgency=normal \
             --icon=utilities-terminal \
             --appname="Claude Code")
         [ "$ACTION" = "default" ] && tlink open "$DEEPLINK"
-    ) &"##,
+    ) &"##
+        }
 
-        NotifMethod::NotifySend => r##"    notify-send "Claude Code — $LOCATION" "$MESSAGE" \
+        NotifMethod::NotifySend => {
+            r##"    notify-send "$NOTIF_TITLE" "$MESSAGE" \
         --urgency=normal \
         --icon=utilities-terminal \
-        --app-name="Claude Code""##,
+        --app-name="Claude Code" \
+        --hint=string:body:"$LOCATION""##
+        }
     };
 
+    // Parse message + notification_type in one Python call; use eval to set
+    // both MESSAGE and NOTIF_TITLE safely (shlex.quote handles escaping).
     format!(
         r##"#!/bin/bash
 # tlink claude-notification hook
@@ -242,17 +295,29 @@ PANE=$(tmux display-message -p "#{{pane_index}}" 2>/dev/null) || exit 0
 [ -z "$SESSION" ] && exit 0
 
 INPUT=$(cat)
-MESSAGE=$(printf '%s' "$INPUT" | python3 -c "
-import sys, json
+eval "$(printf '%s' "$INPUT" | python3 -c "
+import sys, json, shlex
+TYPES = {{
+    'idle_prompt':          'Waiting for your input',
+    'permission_prompt':    'Permission needed',
+    'auth_success':         'Authenticated',
+    'elicitation_dialog':   'MCP: question for you',
+    'elicitation_complete': 'MCP: dialog complete',
+    'elicitation_response': 'MCP: response submitted',
+}}
 try:
-    d = json.loads(sys.stdin.read())
-    print(d.get('message', 'Claude notification'))
+    d    = json.loads(sys.stdin.read())
+    msg  = d.get('message', 'Claude notification').replace(chr(10), ' ')
+    kind = d.get('notification_type', '')
+    print('MESSAGE='     + shlex.quote(msg))
+    print('NOTIF_TITLE=' + shlex.quote(TYPES.get(kind, 'Claude Code')))
 except Exception:
-    print('Claude notification')
-" 2>/dev/null || echo "Claude notification")
+    print(\"MESSAGE='Claude notification'\")
+    print(\"NOTIF_TITLE='Claude Code'\")
+" 2>/dev/null || echo "MESSAGE='Claude notification'; NOTIF_TITLE='Claude Code'")"
 
 DEEPLINK="tmux://${{SESSION}}/${{WINDOW}}/${{PANE}}"
-LOCATION="${{SESSION}}:${{WINDOW}}.${{PANE}}"
+LOCATION="${{SESSION}} > ${{WINDOW}} > ${{PANE}}"
 
 {notify_block}
 "##,
@@ -331,12 +396,28 @@ mod tests {
 
     #[test]
     fn test_generate_script_captures_tmux_context() {
-        for method in [NotifMethod::TerminalNotifier, NotifMethod::Osascript,
-                       NotifMethod::Dunstify, NotifMethod::NotifySend] {
+        for method in [
+            NotifMethod::TerminalNotifier,
+            NotifMethod::Osascript,
+            NotifMethod::Dunstify,
+            NotifMethod::NotifySend,
+        ] {
             let s = generate_hook_script(&method);
-            assert!(s.contains("session_name"), "missing session_name for {:?}", method);
-            assert!(s.contains("window_name"),  "missing window_name for {:?}", method);
-            assert!(s.contains("pane_index"),   "missing pane_index for {:?}", method);
+            assert!(
+                s.contains("session_name"),
+                "missing session_name for {:?}",
+                method
+            );
+            assert!(
+                s.contains("window_name"),
+                "missing window_name for {:?}",
+                method
+            );
+            assert!(
+                s.contains("pane_index"),
+                "missing pane_index for {:?}",
+                method
+            );
         }
     }
 

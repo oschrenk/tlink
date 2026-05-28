@@ -5,6 +5,9 @@ use std::path::PathBuf;
 #[derive(Debug, Serialize, Deserialize, Default, PartialEq, Clone)]
 pub struct Config {
     pub terminal: Option<String>,
+    /// Notification method chosen during `tlink install claude-notification`
+    /// Values: "terminal-notifier" | "osascript" | "dunstify" | "notify-send"
+    pub notification_method: Option<String>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -49,7 +52,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_serialization() {
-        let config = Config { terminal: Some("iTerm2".to_string()) };
+        let config = Config { terminal: Some("iTerm2".to_string()), ..Default::default() };
         let serialized = toml::to_string(&config).unwrap();
         let deserialized: Config = toml::from_str(&serialized).unwrap();
         assert_eq!(deserialized.terminal.as_deref(), Some("iTerm2"));

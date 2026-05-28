@@ -37,6 +37,16 @@ pub enum Commands {
         #[command(subcommand)]
         target: ListTarget,
     },
+    /// Fire a desktop notification from a Claude Code hook (reads JSON from stdin)
+    #[command(hide = true)]
+    Notify {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        window: String,
+        #[arg(long)]
+        pane: String,
+    },
 }
 
 #[derive(Subcommand)]

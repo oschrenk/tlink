@@ -106,7 +106,7 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<O
 
         match state.clone() {
             WizardState::Installing { terminal_name } => {
-                let config = crate::config::Config { terminal: Some(terminal_name.clone()) };
+                let config = crate::config::Config { terminal: Some(terminal_name.clone()), ..Default::default() };
                 let _ = crate::config::save(&config);
                 let install_ok = crate::bundle::create().is_ok();
                 let success = install_ok && verify_scheme();

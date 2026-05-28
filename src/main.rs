@@ -8,6 +8,7 @@ mod restart;
 mod setup;
 mod doctor;
 mod addon;
+mod notify;
 
 use anyhow::Result;
 use clap::Parser;
@@ -31,5 +32,6 @@ fn run() -> Result<()> {
         Commands::Install { addon } => addon::install(&addon),
         Commands::Delete { addon } => addon::delete(&addon),
         Commands::List { target: ListTarget::Addons } => addon::list(),
+        Commands::Notify { session, window, pane } => notify::run(&session, &window, &pane),
     }
 }

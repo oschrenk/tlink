@@ -49,15 +49,36 @@ impl EventOpt {
     fn all_events() -> Vec<Self> {
         vec![
             // Pre-checked: the two events users almost always want
-            Self { event: HookEvent::IdlePrompt,          selected: true  },
-            Self { event: HookEvent::PermissionPrompt,    selected: true  },
+            Self {
+                event: HookEvent::IdlePrompt,
+                selected: true,
+            },
+            Self {
+                event: HookEvent::PermissionPrompt,
+                selected: true,
+            },
             // Opt-in: lower signal or MCP-specific
-            Self { event: HookEvent::AuthSuccess,         selected: false },
-            Self { event: HookEvent::ElicitationDialog,   selected: false },
-            Self { event: HookEvent::ElicitationComplete, selected: false },
-            Self { event: HookEvent::ElicitationResponse, selected: false },
+            Self {
+                event: HookEvent::AuthSuccess,
+                selected: false,
+            },
+            Self {
+                event: HookEvent::ElicitationDialog,
+                selected: false,
+            },
+            Self {
+                event: HookEvent::ElicitationComplete,
+                selected: false,
+            },
+            Self {
+                event: HookEvent::ElicitationResponse,
+                selected: false,
+            },
             // Catch-all: overrides individual selections
-            Self { event: HookEvent::All,                 selected: false },
+            Self {
+                event: HookEvent::All,
+                selected: false,
+            },
         ]
     }
 }
@@ -78,9 +99,18 @@ pub fn next_state(state: State, key: KeyCode) -> State {
         },
         (State::SelectMethod { methods, cursor }, KeyCode::Down) => {
             let max = methods.len().saturating_sub(1);
-            State::SelectMethod { methods, cursor: (cursor + 1).min(max) }
+            State::SelectMethod {
+                methods,
+                cursor: (cursor + 1).min(max),
+            }
         }
-        (State::SelectMethod { methods: _, cursor: _ }, KeyCode::Enter) => State::SelectEvents {
+        (
+            State::SelectMethod {
+                methods: _,
+                cursor: _,
+            },
+            KeyCode::Enter,
+        ) => State::SelectEvents {
             events: EventOpt::all_events(),
             cursor: 0,
         },
@@ -93,7 +123,10 @@ pub fn next_state(state: State, key: KeyCode) -> State {
         },
         (State::SelectEvents { events, cursor }, KeyCode::Down) => {
             let max = events.len().saturating_sub(1);
-            State::SelectEvents { cursor: (cursor + 1).min(max), events }
+            State::SelectEvents {
+                cursor: (cursor + 1).min(max),
+                events,
+            }
         }
         (State::SelectEvents { mut events, cursor }, KeyCode::Char(' ')) => {
             events[cursor].selected = !events[cursor].selected;
@@ -151,7 +184,9 @@ pub fn run() -> Result<Option<InstallOptions>> {
 
 // ── Event loop (handles Installing auto-transition and keeps pending state) ───
 
-fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Option<InstallOptions>> {
+fn event_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<Option<InstallOptions>> {
     let mut state = State::Welcome;
     let mut pending_method: Option<NotifMethod> = None;
 
@@ -160,7 +195,10 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<O
 
         match state.clone() {
             State::Installing { method, events } => {
-                let opts = InstallOptions { method: method.clone(), events: events.clone() };
+                let opts = InstallOptions {
+                    method: method.clone(),
+                    events: events.clone(),
+                };
                 super::install_with_options(&opts)?;
                 state = State::Done { method, events };
                 continue;
@@ -173,7 +211,11 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<O
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(KeyEvent { code, .. }) = event::read()? {
                 // Done: exit BEFORE calling next_state (which would transition to Cancelled)
-                if let State::Done { ref method, ref events } = state {
+                if let State::Done {
+                    ref method,
+                    ref events,
+                } = state
+                {
                     return Ok(Some(InstallOptions {
                         method: method.clone(),
                         events: events.clone(),
@@ -181,7 +223,11 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<O
                 }
 
                 // Capture method before leaving SelectMethod
-                if let State::SelectMethod { ref methods, cursor } = state {
+                if let State::SelectMethod {
+                    ref methods,
+                    cursor,
+                } = state
+                {
                     if code == KeyCode::Enter {
                         pending_method = Some(methods[cursor].clone());
                     }
@@ -227,7 +273,9 @@ fn render(f: &mut ratatui::Frame, state: &State) {
                     )),
                     Line::from(""),
                     Line::from("When Claude finishes a task or needs your attention, you'll get"),
-                    Line::from("a desktop notification showing the tmux location (session:window.pane)."),
+                    Line::from(
+                        "a desktop notification showing the tmux location (session:window.pane).",
+                    ),
                     Line::from(""),
                     Line::from("This wizard will configure:"),
                     Line::from("  • Notification delivery method"),
@@ -250,7 +298,9 @@ fn render(f: &mut ratatui::Frame, state: &State) {
                     let selected = i == *cursor;
                     let prefix = if selected { "❯ " } else { "  " };
                     let name_style = if selected {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default()
                     };
@@ -271,19 +321,17 @@ fn render(f: &mut ratatui::Frame, state: &State) {
                             Span::raw("  "),
                             tag,
                         ]),
-                        Line::from(Span::styled(
-                            format!("    {}", m.description()),
-                            desc_style,
-                        )),
+                        Line::from(Span::styled(format!("    {}", m.description()), desc_style)),
                         Line::from(""),
                     ])
                 })
                 .collect();
 
             let list = List::new(items)
-                .block(Block::default().title(
-                    "Notification method  (↑/↓ move  •  Enter select  •  q quit)",
-                ))
+                .block(
+                    Block::default()
+                        .title("Notification method  (↑/↓ move  •  Enter select  •  q quit)"),
+                )
                 .highlight_style(Style::default()); // styling handled per-item above
             let mut ls = ListState::default();
             ls.select(Some(*cursor));
@@ -298,12 +346,19 @@ fn render(f: &mut ratatui::Frame, state: &State) {
                     let selected_row = i == *cursor;
                     let prefix = if selected_row { "❯ " } else { "  " };
                     let check = if e.selected {
-                        Span::styled("[x] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                        Span::styled(
+                            "[x] ",
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        )
                     } else {
                         Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
                     };
                     let label_style = if selected_row {
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default()
                     };
@@ -327,11 +382,12 @@ fn render(f: &mut ratatui::Frame, state: &State) {
                 })
                 .collect();
 
-            let list = List::new(items)
-                .block(Block::default().title(
-                    "Hook events  (↑/↓ move  •  Space toggle  •  Enter confirm  •  q quit)",
-                ))
-                .highlight_style(Style::default()); // styling handled per-item above
+            let list =
+                List::new(items)
+                    .block(Block::default().title(
+                        "Hook events  (↑/↓ move  •  Space toggle  •  Enter confirm  •  q quit)",
+                    ))
+                    .highlight_style(Style::default()); // styling handled per-item above
             let mut ls = ListState::default();
             ls.select(Some(*cursor));
             f.render_stateful_widget(list, content, &mut ls);
@@ -341,16 +397,20 @@ fn render(f: &mut ratatui::Frame, state: &State) {
             let event_labels: Vec<String> = events.iter().map(|e| e.label().to_string()).collect();
             f.render_widget(
                 Paragraph::new(vec![
-                    Line::from(Span::styled("Review", Style::default().add_modifier(Modifier::BOLD))),
+                    Line::from(Span::styled(
+                        "Review",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
                     Line::from(""),
                     Line::from(format!("  Notification method : {}", method.label())),
-                    Line::from(format!("  Hook events        : {}", event_labels.join(", "))),
+                    Line::from(format!(
+                        "  Hook events        : {}",
+                        event_labels.join(", ")
+                    )),
                     Line::from(format!(
                         "  Hook script        : ~/.config/tlink/hooks/claude-notification.sh"
                     )),
-                    Line::from(format!(
-                        "  Claude settings    : ~/.claude/settings.json"
-                    )),
+                    Line::from(format!("  Claude settings    : ~/.claude/settings.json")),
                     Line::from(""),
                     Line::from(Span::styled(
                         "Enter/y to install  •  n/Esc to cancel",
@@ -362,10 +422,7 @@ fn render(f: &mut ratatui::Frame, state: &State) {
         }
 
         State::Installing { .. } => {
-            f.render_widget(
-                Paragraph::new("Installing…"),
-                content,
-            );
+            f.render_widget(Paragraph::new("Installing…"), content);
         }
 
         State::Done { method, events } => {
@@ -373,7 +430,9 @@ fn render(f: &mut ratatui::Frame, state: &State) {
             let mut lines = vec![
                 Line::from(Span::styled(
                     "Installed!",
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
                 )),
                 Line::from(""),
                 Line::from(format!("  Method : {}", method.label())),
@@ -435,8 +494,14 @@ mod tests {
 
     #[test]
     fn test_welcome_q_cancels() {
-        assert!(matches!(next_state(State::Welcome, KeyCode::Char('q')), State::Cancelled));
-        assert!(matches!(next_state(State::Welcome, KeyCode::Esc), State::Cancelled));
+        assert!(matches!(
+            next_state(State::Welcome, KeyCode::Char('q')),
+            State::Cancelled
+        ));
+        assert!(matches!(
+            next_state(State::Welcome, KeyCode::Esc),
+            State::Cancelled
+        ));
     }
 
     #[test]
@@ -451,12 +516,18 @@ mod tests {
             methods: vec![NotifMethod::Osascript],
             cursor: 0,
         };
-        assert!(matches!(next_state(state, KeyCode::Down), State::SelectMethod { cursor: 0, .. }));
+        assert!(matches!(
+            next_state(state, KeyCode::Down),
+            State::SelectMethod { cursor: 0, .. }
+        ));
     }
 
     #[test]
     fn test_select_method_enter_goes_to_select_events() {
-        assert!(matches!(next_state(method_state(), KeyCode::Enter), State::SelectEvents { .. }));
+        assert!(matches!(
+            next_state(method_state(), KeyCode::Enter),
+            State::SelectEvents { .. }
+        ));
     }
 
     #[test]
@@ -484,9 +555,27 @@ mod tests {
     #[test]
     fn test_select_events_defaults_idle_and_permission_prechecked() {
         let events = EventOpt::all_events();
-        assert!(events.iter().find(|e| e.event == HookEvent::IdlePrompt).unwrap().selected);
-        assert!(events.iter().find(|e| e.event == HookEvent::PermissionPrompt).unwrap().selected);
-        assert!(!events.iter().find(|e| e.event == HookEvent::All).unwrap().selected);
+        assert!(
+            events
+                .iter()
+                .find(|e| e.event == HookEvent::IdlePrompt)
+                .unwrap()
+                .selected
+        );
+        assert!(
+            events
+                .iter()
+                .find(|e| e.event == HookEvent::PermissionPrompt)
+                .unwrap()
+                .selected
+        );
+        assert!(
+            !events
+                .iter()
+                .find(|e| e.event == HookEvent::All)
+                .unwrap()
+                .selected
+        );
     }
 
     #[test]
@@ -494,7 +583,10 @@ mod tests {
         let state = State::SelectEvents {
             events: EventOpt::all_events()
                 .into_iter()
-                .map(|mut e| { e.selected = false; e })
+                .map(|mut e| {
+                    e.selected = false;
+                    e
+                })
                 .collect(),
             cursor: 0,
         };
@@ -523,7 +615,10 @@ mod tests {
             method: NotifMethod::Osascript,
             events: vec![HookEvent::IdlePrompt],
         };
-        assert!(matches!(next_state(state, KeyCode::Enter), State::Installing { .. }));
+        assert!(matches!(
+            next_state(state, KeyCode::Enter),
+            State::Installing { .. }
+        ));
     }
 
     #[test]
@@ -532,6 +627,9 @@ mod tests {
             method: NotifMethod::Osascript,
             events: vec![HookEvent::IdlePrompt],
         };
-        assert!(matches!(next_state(state, KeyCode::Char('n')), State::Cancelled));
+        assert!(matches!(
+            next_state(state, KeyCode::Char('n')),
+            State::Cancelled
+        ));
     }
 }

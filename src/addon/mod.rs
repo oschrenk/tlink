@@ -35,7 +35,11 @@ pub fn list() -> Result<()> {
     println!("{:<25} {:<15} {}", "NAME", "STATUS", "DESCRIPTION");
     println!("{}", "─".repeat(80));
     for a in &addons {
-        let status = if a.installed { "installed" } else { "not installed" };
+        let status = if a.installed {
+            "installed"
+        } else {
+            "not installed"
+        };
         println!("{:<25} {:<15} {}", a.name, status, a.description);
     }
     Ok(())
