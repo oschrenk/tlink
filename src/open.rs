@@ -48,7 +48,7 @@ fn execute_switch(target: &TmuxTarget) -> Result<()> {
 
     run_tmux(&["switch-client", "-t", &tmux_target])?;
 
-    // Show a brief status-bar message in the pane we just landed in.
+    // Status-bar toast.
     let label = match (&target.window, &target.pane) {
         (Some(w), Some(p)) => format!("tlink → {session}:{w}.{p}"),
         (Some(w), None)    => format!("tlink → {session}:{w}"),
@@ -57,6 +57,18 @@ fn execute_switch(target: &TmuxTarget) -> Result<()> {
     let _ = Command::new("tmux")
         .args(["display-message", "-d", "2000", "-t", &tmux_target, &label])
         .status();
+
+    // Flash the active pane border: set a vivid colour, then reset after 1.5 s.
+    // pane-active-border-style is a window option, so target at window level.
+    let win_target = match &target.window {
+        Some(w) => format!("{session}:{w}"),
+        None    => session.to_string(),
+    };
+    let _ = Command::new("tmux")
+        .args(["set-option", "-t", &win_target, "pane-active-border-style", "fg=colour46,bold"])
+        .status();
+    let reset = format!("sleep 1.5 && tmux set-option -ut '{}' pane-active-border-style", win_target);
+    let _ = Command::new("sh").args(["-c", &reset]).spawn();
 
     Ok(())
 }
