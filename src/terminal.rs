@@ -11,14 +11,14 @@ pub fn from_name(name: &str) -> TerminalAdapter {
 
 impl TerminalAdapter {
     pub fn focus(&self) -> Result<()> {
-        match self.name.as_str() {
-            "iTerm2" => applescript_activate("iTerm2"),
-            "Terminal" | "Terminal.app" => applescript_activate("Terminal"),
-            "Ghostty" => open_app("Ghostty"),
-            "Kitty" => open_app("kitty"),
-            "WezTerm" => open_app("WezTerm"),
-            other => open_app(other),
-        }
+        // `tell application X to activate` is the reliable way to bring any
+        // macOS app to the foreground. `open -a` only sends a launch event and
+        // does not guarantee the window comes to front on a different Space.
+        let app_name = match self.name.as_str() {
+            "Kitty" => "kitty",
+            other => other,
+        };
+        applescript_activate(app_name)
     }
 
     /// Tell the terminal to open a new window/tab running `tmux attach-session -t target`.
