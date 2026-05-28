@@ -65,10 +65,6 @@ fn applescript_activate(app_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn open_app(app_name: &str) -> Result<()> {
-    Command::new("open").args(["-a", app_name]).status()?;
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {
