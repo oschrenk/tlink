@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "tlink", about = "tmux:// deeplink CLI for macOS")]
+#[command(name = "tlink", about = "tmux:// deeplink CLI for macOS", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
