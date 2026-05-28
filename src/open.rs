@@ -46,7 +46,19 @@ fn execute_switch(target: &TmuxTarget) -> Result<()> {
         _ => session.to_string(),
     };
 
-    run_tmux(&["switch-client", "-t", &tmux_target])
+    run_tmux(&["switch-client", "-t", &tmux_target])?;
+
+    // Show a brief status-bar message in the pane we just landed in.
+    let label = match (&target.window, &target.pane) {
+        (Some(w), Some(p)) => format!("tlink → {session}:{w}.{p}"),
+        (Some(w), None)    => format!("tlink → {session}:{w}"),
+        _                  => format!("tlink → {session}"),
+    };
+    let _ = Command::new("tmux")
+        .args(["display-message", "-d", "2000", "-t", &tmux_target, &label])
+        .status();
+
+    Ok(())
 }
 
 fn run_tmux(args: &[&str]) -> Result<()> {
