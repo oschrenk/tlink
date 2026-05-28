@@ -1,0 +1,17 @@
+[package]
+name = "tlink"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tlink"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+ratatui = "0.29"
+crossterm = "0.28"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "5"
+anyhow = "1"
