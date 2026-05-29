@@ -98,7 +98,9 @@ pub fn next_state(state: State, key: KeyCode) -> State {
         // Welcome
         (State::Welcome, KeyCode::Enter) => {
             let methods = NotifMethod::platform_methods();
-            State::SelectMethod { methods, cursor: 0 }
+            let rec = NotifMethod::recommended_method();
+            let cursor = methods.iter().position(|m| m == &rec).unwrap_or(0);
+            State::SelectMethod { methods, cursor }
         }
         (State::Welcome, KeyCode::Char('q') | KeyCode::Esc) => State::Cancelled,
 
@@ -310,20 +312,26 @@ fn render(f: &mut ratatui::Frame, state: &State) {
         }
 
         State::SelectMethod { methods, cursor } => {
+            let rec = NotifMethod::recommended_method();
             let items: Vec<ListItem> = methods
                 .iter()
                 .enumerate()
                 .map(|(i, m)| {
                     let selected = i == *cursor;
+                    let is_rec   = m == &rec;
                     let prefix = if selected { "❯ " } else { "  " };
                     let name_style = if selected {
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD)
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default()
                     };
-                    let tag = if m.available() {
+                    let tag = if is_rec {
+                        if m.available() {
+                            Span::styled("[★ recommended]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                        } else {
+                            Span::styled("[★ recommended — needs install]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                        }
+                    } else if m.available() {
                         Span::styled("[ok]", Style::default().fg(Color::Green))
                     } else {
                         Span::styled("[--]", Style::default().fg(Color::DarkGray))
@@ -491,7 +499,14 @@ fn render(f: &mut ratatui::Frame, state: &State) {
             ];
             if *method == NotifMethod::Osascript || *method == NotifMethod::NotifySend {
                 lines.push(Line::from(Span::styled(
-                    "  Tip: install terminal-notifier (macOS) or dunst (Linux) for click-to-navigate",
+                    "  Tip: install alerter (macOS 12+) or dunst (Linux) for click-to-navigate",
+                    Style::default().fg(Color::Yellow),
+                )));
+                lines.push(Line::from(""));
+            }
+            if *method == NotifMethod::TerminalNotifier {
+                lines.push(Line::from(Span::styled(
+                    "  Note: terminal-notifier click actions are broken on macOS 12+; consider alerter",
                     Style::default().fg(Color::Yellow),
                 )));
                 lines.push(Line::from(""));
@@ -522,7 +537,7 @@ mod tests {
 
     fn method_state() -> State {
         State::SelectMethod {
-            methods: vec![NotifMethod::TerminalNotifier, NotifMethod::Osascript],
+            methods: vec![NotifMethod::Alerter, NotifMethod::TerminalNotifier, NotifMethod::Osascript],
             cursor: 0,
         }
     }

@@ -43,21 +43,18 @@ fn applescript_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// macOS bundle ID for known terminals — used to attribute notifications correctly.
-fn bundle_id(terminal: &str) -> &'static str {
-    match terminal {
-        "Ghostty"                   => "com.mitchellh.ghostty",
-        "iTerm2"                    => "com.googlecode.iterm2",
-        "Terminal" | "Terminal.app" => "com.apple.Terminal",
-        "Kitty"                     => "net.kovidgoyal.kitty",
-        "WezTerm"                   => "com.github.wez.wezterm",
-        _                           => "com.apple.Terminal",
-    }
-}
 
 fn terminal_notifier_available() -> bool {
     Command::new("which")
         .arg("terminal-notifier")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn alerter_available() -> bool {
+    Command::new("which")
+        .arg("alerter")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
@@ -118,17 +115,20 @@ pub fn run(session: &str, window: &str, pane: &str) -> Result<()> {
     let deeplink = format!("tmux://{}/{}/{}", session, window, pane);
     let location = format!("{} > {} > {}", session, window, pane);
 
-    let config   = crate::config::load().unwrap_or_default();
-    let method   = config.notification_method.as_deref().unwrap_or("osascript");
-    let terminal = config.terminal.as_deref().unwrap_or("Ghostty");
+    let config = crate::config::load().unwrap_or_default();
+    let method = config.notification_method.as_deref().unwrap_or("osascript");
 
-    fire(method, terminal, &title, &message, &location, &deeplink)
+    fire(method, &title, &message, &location, &deeplink)
 }
 
-fn fire(method: &str, terminal: &str, title: &str, message: &str, location: &str, deeplink: &str) -> Result<()> {
+fn fire(method: &str, title: &str, message: &str, location: &str, deeplink: &str) -> Result<()> {
     match method {
+        "alerter" => {
+            fire_alerter(title, message, location, deeplink)?;
+        }
+
         "terminal-notifier" => {
-            fire_terminal_notifier(bundle_id(terminal), title, message, location, deeplink)?;
+            fire_terminal_notifier(title, message, location, deeplink)?;
         }
 
         "dunstify" => {
@@ -156,18 +156,21 @@ fn fire(method: &str, terminal: &str, title: &str, message: &str, location: &str
         }
 
         // "osascript" or any unknown value:
-        // Prefer terminal-notifier if available — osascript's display notification
-        // is owned by Script Editor, so clicking the notification opens Script Editor
-        // instead of the user's terminal.
+        // alerter is the preferred macOS fallback — UNUserNotificationCenter with real click
+        // callbacks. terminal-notifier's -execute/-open are broken on macOS 12+.
+        // Last resort: osascript display notification (no click callback) + open location
+        // to invoke the URL scheme immediately when the notification fires.
         _ => {
-            if terminal_notifier_available() {
-                fire_terminal_notifier(bundle_id(terminal), title, message, location, deeplink)?;
+            if alerter_available() {
+                fire_alerter(title, message, location, deeplink)?;
             } else {
                 let script = format!(
-                    "display notification \"{}\" with title \"{}\" subtitle \"{}\" sound name \"Glass\"",
+                    "display notification \"{}\" with title \"{}\" subtitle \"{}\" sound name \"Glass\"\n\
+                     open location \"{}\"",
                     applescript_escape(message),
                     applescript_escape(title),
                     applescript_escape(location),
+                    applescript_escape(deeplink),
                 );
                 Command::new("osascript").args(["-e", &script]).status()?;
             }
@@ -176,14 +179,33 @@ fn fire(method: &str, terminal: &str, title: &str, message: &str, location: &str
     Ok(())
 }
 
-fn fire_terminal_notifier(sender: &str, title: &str, message: &str, location: &str, deeplink: &str) -> Result<()> {
+fn fire_alerter(title: &str, message: &str, location: &str, deeplink: &str) -> Result<()> {
+    // alerter blocks until user interaction; run in a background shell that opens
+    // the deeplink when the notification body (@CONTENTCLICKED) or action button
+    // (@ACTIONCLICKED) is clicked.
+    let cmd = format!(
+        "result=$(alerter --title {t} --subtitle {loc} --message {m} \
+            --actions 'Open' --close-label 'Dismiss' --sound 'Glass' --timeout 60); \
+         case \"$result\" in @CONTENTCLICKED|@ACTIONCLICKED) open {dl} ;; esac",
+        t   = sh_quote(title),
+        loc = sh_quote(location),
+        m   = sh_quote(message),
+        dl  = sh_quote(deeplink),
+    );
+    Command::new("sh").args(["-c", &cmd]).spawn()?;
+    Ok(())
+}
+
+fn fire_terminal_notifier(title: &str, message: &str, location: &str, deeplink: &str) -> Result<()> {
     Command::new("terminal-notifier")
         .args([
             "-title",    title,
             "-subtitle", location,
             "-message",  message,
-            "-sender",   sender,
-            "-execute",  &format!("tlink open {}", deeplink),
+            // -execute is broken on macOS 12+ (command never fires).
+            // -open invokes the registered OS URL scheme handler on click,
+            // which routes through tlink's tmux:// handler without PATH issues.
+            "-open",     deeplink,
         ])
         .spawn()?;
     Ok(())
