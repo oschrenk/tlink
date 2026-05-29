@@ -3,6 +3,9 @@ use serde::Deserialize;
 use std::io::Read;
 use std::process::Command;
 
+const NOTIFICATION_LOGO: &str =
+    "https://raw.githubusercontent.com/ahnopologetic/tlink/main/assets/notification-logo.png";
+
 #[derive(Deserialize, Default)]
 struct Payload {
     hook_event_name: Option<String>,
@@ -206,12 +209,13 @@ fn fire_alerter(title: &str, message: &str, location: &str, deeplink: &str) -> R
     // the deeplink when the notification body (@CONTENTCLICKED) or action button
     // (@ACTIONCLICKED) is clicked.
     let cmd = format!(
-        "result=$(alerter --title {t} --subtitle {loc} --message {m} \
+        "result=$(alerter --title {t} --subtitle {loc} --message {m} --app-icon {icon} \
             --actions 'Open' --close-label 'Dismiss' --sound 'Glass' --timeout 60); \
          case \"$result\" in @CONTENTCLICKED|@ACTIONCLICKED) open {dl} ;; esac",
         t = sh_quote(title),
         loc = sh_quote(location),
         m = sh_quote(message),
+        icon = &NOTIFICATION_LOGO,
         dl = sh_quote(deeplink),
     );
     Command::new("sh").args(["-c", &cmd]).spawn()?;
