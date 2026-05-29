@@ -44,8 +44,6 @@ mod tests {
             message: "Done".into(),
             location: "s > w > 0".into(),
             deeplink: "tmux://s/w/0".into(),
-            notification_type: "idle_prompt".into(),
-            choices: vec![],
         }
     }
 
