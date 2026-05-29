@@ -22,6 +22,8 @@ struct Payload {
     task_title: Option<String>,
     // Session events
     reason: Option<String>,
+    // Elicitation choices (elicitation_dialog)
+    choices: Option<Vec<String>>,
 }
 
 fn type_to_title(t: &str) -> &'static str {
@@ -54,23 +56,28 @@ fn alerter_available() -> bool {
         .unwrap_or(false)
 }
 
-fn resolve(payload: &Payload) -> (String, String) {
+fn resolve(payload: &Payload) -> (String, String, Vec<String>) {
     match payload.hook_event_name.as_deref().unwrap_or("Notification") {
         "Notification" => {
-            let t = payload
-                .notification_type
-                .as_deref()
+            let notification_type = payload.notification_type.as_deref();
+            let t = notification_type
                 .map(type_to_title)
                 .unwrap_or("Claude Code");
             let m = payload
                 .message
                 .clone()
                 .unwrap_or_else(|| "Claude notification".into());
-            (t.into(), m)
+            let choices = match notification_type {
+                Some("permission_prompt") => vec!["Allow".into(), "Deny".into()],
+                Some("elicitation_dialog") => payload.choices.clone().unwrap_or_default(),
+                _ => vec![],
+            };
+            (t.into(), m, choices)
         }
         "Stop" => (
             "Claude finished".into(),
             "Claude finished responding and is waiting for your input.".into(),
+            vec![],
         ),
         "StopFailure" => (
             "Claude error".into(),
@@ -78,6 +85,7 @@ fn resolve(payload: &Payload) -> (String, String) {
                 "Turn failed: {}",
                 payload.error_type.as_deref().unwrap_or("unknown error")
             ),
+            vec![],
         ),
         "PostToolUse" => (
             "Tool completed".into(),
@@ -85,10 +93,12 @@ fn resolve(payload: &Payload) -> (String, String) {
                 "{} finished",
                 payload.tool_name.as_deref().unwrap_or("Tool")
             ),
+            vec![],
         ),
         "PostToolUseFailure" => (
             "Tool failed".into(),
             format!("{} error", payload.tool_name.as_deref().unwrap_or("Tool")),
+            vec![],
         ),
         "SubagentStop" => (
             "Subagent done".into(),
@@ -96,6 +106,7 @@ fn resolve(payload: &Payload) -> (String, String) {
                 "{} subagent finished",
                 payload.agent_type.as_deref().unwrap_or("A")
             ),
+            vec![],
         ),
         "TeammateIdle" => (
             "Teammate idle".into(),
@@ -103,6 +114,7 @@ fn resolve(payload: &Payload) -> (String, String) {
                 "{} is waiting for your input",
                 payload.agent_type.as_deref().unwrap_or("Teammate")
             ),
+            vec![],
         ),
         "TaskCreated" => (
             "Task created".into(),
@@ -110,14 +122,17 @@ fn resolve(payload: &Payload) -> (String, String) {
                 .task_title
                 .clone()
                 .unwrap_or_else(|| "New task".into()),
+            vec![],
         ),
         "TaskCompleted" => (
             "Task complete".into(),
             "A task was marked as completed.".into(),
+            vec![],
         ),
         "SessionStart" => (
             "Session started".into(),
             "A Claude Code session has started.".into(),
+            vec![],
         ),
         "SessionEnd" => (
             "Session ended".into(),
@@ -125,8 +140,9 @@ fn resolve(payload: &Payload) -> (String, String) {
                 "Session ended: {}",
                 payload.reason.as_deref().unwrap_or("unknown")
             ),
+            vec![],
         ),
-        other => ("Claude Code".into(), format!("{} event", other)),
+        other => ("Claude Code".into(), format!("{} event", other), vec![]),
     }
 }
 
@@ -135,7 +151,8 @@ pub fn run(session: &str, window: &str, pane: &str) -> Result<()> {
     std::io::stdin().read_to_string(&mut stdin)?;
 
     let payload: Payload = serde_json::from_str(&stdin).unwrap_or_default();
-    let (title, message) = resolve(&payload);
+    let (title, message, choices) = resolve(&payload);
+    let notification_type = payload.notification_type.as_deref().unwrap_or("");
 
     let deeplink = format!("tmux://{}/{}/{}", session, window, pane);
     let location = format!("{} > {} > {}", session, window, pane);
@@ -143,13 +160,36 @@ pub fn run(session: &str, window: &str, pane: &str) -> Result<()> {
     let config = crate::config::load().unwrap_or_default();
     let method = config.notification_method.as_deref().unwrap_or("osascript");
 
-    fire(method, &title, &message, &location, &deeplink)
+    fire(
+        method,
+        &title,
+        &message,
+        &location,
+        &deeplink,
+        notification_type,
+        &choices,
+    )
 }
 
-fn fire(method: &str, title: &str, message: &str, location: &str, deeplink: &str) -> Result<()> {
+fn fire(
+    method: &str,
+    title: &str,
+    message: &str,
+    location: &str,
+    deeplink: &str,
+    notification_type: &str,
+    choices: &[String],
+) -> Result<()> {
     match method {
         "alerter" => {
-            fire_alerter(title, message, location, deeplink)?;
+            fire_alerter(
+                title,
+                message,
+                location,
+                deeplink,
+                notification_type,
+                choices,
+            )?;
         }
 
         "terminal-notifier" => {
@@ -187,7 +227,14 @@ fn fire(method: &str, title: &str, message: &str, location: &str, deeplink: &str
         // to invoke the URL scheme immediately when the notification fires.
         _ => {
             if alerter_available() {
-                fire_alerter(title, message, location, deeplink)?;
+                fire_alerter(
+                    title,
+                    message,
+                    location,
+                    deeplink,
+                    notification_type,
+                    choices,
+                )?;
             } else {
                 let script = format!(
                     "display notification \"{}\" with title \"{}\" subtitle \"{}\" sound name \"Glass\"\n\
@@ -204,19 +251,64 @@ fn fire(method: &str, title: &str, message: &str, location: &str, deeplink: &str
     Ok(())
 }
 
-fn fire_alerter(title: &str, message: &str, location: &str, deeplink: &str) -> Result<()> {
-    // alerter blocks until user interaction; run in a background shell that opens
-    // the deeplink when the notification body (@CONTENTCLICKED) or action button
-    // (@ACTIONCLICKED) is clicked.
+fn fire_alerter(
+    title: &str,
+    message: &str,
+    location: &str,
+    deeplink: &str,
+    notification_type: &str,
+    choices: &[String],
+) -> Result<()> {
+    let actions = if choices.is_empty() {
+        "Open".to_string()
+    } else {
+        choices.join(",")
+    };
+
+    // Derive tmux target (tmux://session/window/pane → session:window.pane) for send-keys.
+    let mk_target = format!(
+        "TARGET=$(printf '%s' {dl} | sed 's|tmux://||; s|/|:|; s|/|.|')",
+        dl = sh_quote(deeplink),
+    );
+
+    // Build the result handler based on notification type.
+    // alerter outputs the action label text when a named button is clicked,
+    // @CONTENTCLICKED for body clicks, @ACTIONCLICKED for single-action clicks.
+    let handler = match notification_type {
+        "permission_prompt" => format!(
+            "{mk}; case \"$result\" in \
+               Allow) tmux send-keys -t \"$TARGET\" 'y' Enter ;; \
+               Deny) tmux send-keys -t \"$TARGET\" 'n' Enter ;; \
+               @CONTENTCLICKED|@ACTIONCLICKED) open {dl} ;; \
+             esac",
+            mk = mk_target,
+            dl = sh_quote(deeplink),
+        ),
+        "elicitation_dialog" if !choices.is_empty() => format!(
+            "{mk}; case \"$result\" in \
+               @CONTENTCLICKED|@ACTIONCLICKED) open {dl} ;; \
+               @*) ;; \
+               *) tmux send-keys -t \"$TARGET\" \"$result\" Enter ;; \
+             esac",
+            mk = mk_target,
+            dl = sh_quote(deeplink),
+        ),
+        _ => format!(
+            "case \"$result\" in @CONTENTCLICKED|@ACTIONCLICKED) open {dl} ;; esac",
+            dl = sh_quote(deeplink),
+        ),
+    };
+
     let cmd = format!(
         "result=$(alerter --title {t} --subtitle {loc} --message {m} --app-icon {icon} \
-            --actions 'Open' --close-label 'Dismiss' --sound 'Glass' --timeout 60); \
-         case \"$result\" in @CONTENTCLICKED|@ACTIONCLICKED) open {dl} ;; esac",
+            --actions {actions} --close-label 'Dismiss' --sound 'Glass' --timeout 60); \
+         {handler}",
         t = sh_quote(title),
         loc = sh_quote(location),
         m = sh_quote(message),
-        icon = &NOTIFICATION_LOGO,
-        dl = sh_quote(deeplink),
+        icon = sh_quote(NOTIFICATION_LOGO),
+        actions = sh_quote(&actions),
+        handler = handler,
     );
     Command::new("sh").args(["-c", &cmd]).spawn()?;
     Ok(())
