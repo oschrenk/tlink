@@ -56,6 +56,17 @@ class Handler: NSObject, NSApplicationDelegate {{
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "{tlink_bin}")
             task.arguments = ["open", url.absoluteString]
+            // LaunchServices starts apps with a minimal PATH that omits Homebrew.
+            // Prepend the common prefix directories so tlink can find tmux.
+            var env = ProcessInfo.processInfo.environment
+            var pathVal = env["PATH"] ?? ""
+            for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"] {{
+                if !pathVal.split(separator: ":").map(String.init).contains(dir) {{
+                    pathVal = dir + ":" + pathVal
+                }}
+            }}
+            env["PATH"] = pathVal
+            task.environment = env
             try? task.run()
             task.waitUntilExit()
         }}
@@ -154,6 +165,8 @@ mod tests {
         assert!(src.contains("/Users/bob/.cargo/bin/tlink"));
         assert!(src.contains("open urls: [URL]"));
         assert!(src.contains(r#"arguments = ["open", url.absoluteString]"#));
+        assert!(src.contains("/opt/homebrew/bin"));
+        assert!(src.contains("ProcessInfo.processInfo.environment"));
     }
 
     #[test]

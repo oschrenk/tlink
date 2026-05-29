@@ -38,7 +38,11 @@ pub const KNOWN_TERMINALS: &[&str] = &["iTerm2", "Ghostty", "Kitty", "WezTerm", 
 pub fn detect_terminals() -> Vec<String> {
     KNOWN_TERMINALS
         .iter()
-        .filter(|&&name| std::path::Path::new(&format!("/Applications/{}.app", name)).exists())
+        .filter(|&&name| {
+            std::path::Path::new(&format!("/Applications/{}.app", name)).exists()
+                || std::path::Path::new(&format!("/System/Applications/Utilities/{}.app", name))
+                    .exists()
+        })
         .map(|s| s.to_string())
         .collect()
 }
