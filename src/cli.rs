@@ -50,6 +50,9 @@ pub enum Commands {
         window: String,
         #[arg(long)]
         pane: String,
+        /// Terminal emulator detected from tmux client_termtype (e.g. "ghostty 1.2.3")
+        #[arg(long, default_value = "")]
+        term: String,
     },
 }
 

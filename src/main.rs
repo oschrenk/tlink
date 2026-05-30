@@ -53,6 +53,7 @@ fn run() -> Result<()> {
             session,
             window,
             pane,
-        } => notify::run(&session, &window, &pane),
+            term,
+        } => notify::run(&session, &window, &pane, &term),
     }
 }

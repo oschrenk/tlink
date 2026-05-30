@@ -11,6 +11,10 @@ pub struct Config {
 }
 
 pub fn config_path() -> PathBuf {
+    // Allow override via TLINK_CONFIG env var (useful for testing)
+    if let Ok(override_path) = std::env::var("TLINK_CONFIG") {
+        return PathBuf::from(override_path);
+    }
     dirs::home_dir()
         .expect("home dir not found")
         .join(".config/tlink/config.toml")

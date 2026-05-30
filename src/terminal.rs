@@ -5,10 +5,59 @@ pub struct TerminalAdapter {
     pub name: String,
 }
 
+/// Map a raw `client_termtype` string from tmux to a canonical terminal name.
+/// `client_termtype` is e.g. "ghostty 1.2.3", "Apple_Terminal", "iTerm.app".
+pub fn from_termtype(termtype: &str) -> Option<String> {
+    let lower = termtype.to_lowercase();
+    if lower.starts_with("ghostty") {
+        Some("Ghostty".into())
+    } else if lower.starts_with("apple_terminal") {
+        Some("Terminal.app".into())
+    } else if lower.starts_with("iterm")
+        || lower.starts_with("iterm2")
+        || lower.starts_with("iterm.app")
+    {
+        Some("iTerm2".into())
+    } else if lower.starts_with("wezterm") || lower.starts_with("wez") {
+        Some("WezTerm".into())
+    } else if lower.starts_with("kitty") {
+        Some("Kitty".into())
+    } else if lower.starts_with("alacritty") {
+        Some("Alacritty".into())
+    } else if lower.starts_with("warp") {
+        Some("Warp".into())
+    } else {
+        None
+    }
+}
+
 pub fn from_name(name: &str) -> TerminalAdapter {
     TerminalAdapter {
         name: name.to_string(),
     }
+}
+
+/// Try to detect the terminal emulator from an *attached* tmux client.
+/// Reads `client_termtype` for the first client attached to any session.
+/// Returns `None` if there are no attached clients.
+pub fn detect_from_running_tmux() -> Option<TerminalAdapter> {
+    let output = Command::new("tmux")
+        .args(["list-clients", "-F", "#{client_termtype}"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            if let Some(name) = from_termtype(trimmed) {
+                return Some(TerminalAdapter { name });
+            }
+        }
+    }
+    None
 }
 
 impl TerminalAdapter {
@@ -42,7 +91,6 @@ impl TerminalAdapter {
                 Command::new("osascript").args(["-e", &script]).status()?;
             }
             "WezTerm" => {
-                // wezterm CLI can spawn a command in a new tab
                 Command::new("wezterm")
                     .args(["cli", "spawn", "--", "tmux", "attach-session", "-t", target])
                     .status()?;
@@ -61,8 +109,31 @@ impl TerminalAdapter {
                     ])
                     .status()?;
             }
+            "Ghostty" => {
+                // Ghostty on macOS has no public CLI for opening new windows with a command.
+                // Use System Events keystroke simulation as the best available approach.
+                // This requires Accessibility permission in System Settings.
+                let script = format!(
+                    r#"tell application "Ghostty" to activate
+delay 0.3
+tell application "System Events"
+    tell process "Ghostty"
+        keystroke "n" using command down
+    end tell
+end tell
+delay 0.4
+tell application "System Events"
+    tell process "Ghostty"
+        keystroke "tmux attach-session -t {}"
+        keystroke return
+    end tell
+end tell"#,
+                    target
+                );
+                let _ = Command::new("osascript").args(["-e", &script]).status();
+            }
             _ => {
-                // Ghostty and others: focus only — no public API for sending commands
+                // Unknown terminal: focus only
                 self.focus()?;
             }
         }

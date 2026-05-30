@@ -222,10 +222,13 @@ SESSION=$(tmux display-message -p "#{{session_name}}" 2>/dev/null) || exit 0
 WINDOW=$(tmux display-message -p "#{{window_name}}" 2>/dev/null) || exit 0
 PANE=$(tmux display-message -p "#{{pane_index}}" 2>/dev/null) || exit 0
 [ -z "$SESSION" ] && exit 0
+TERMTYPE=$(tmux display-message -p "#{{client_termtype}}" 2>/dev/null || echo "")
 
 MESSAGE="Codex CLI task completed"
 NOTIF_TITLE="Codex CLI"
+TERM_NAME="${{TERMTYPE%% *}}"
 DEEPLINK="tmux://${{SESSION}}/${{WINDOW}}/${{PANE}}"
+[ -n "$TERM_NAME" ] && DEEPLINK="${{DEEPLINK}}?term=${{TERM_NAME}}"
 LOCATION="${{SESSION}} > ${{WINDOW}} > ${{PANE}}"
 
 {notify_block}

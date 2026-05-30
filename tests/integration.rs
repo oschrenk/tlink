@@ -1,20 +1,33 @@
+use std::fs;
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-fn tlink_cmd(args: &[&str]) -> Command {
-    // TLINK_BIN set by CI — pre-built copy, avoids lock + test-harness issues
+fn tlink_bin() -> String {
     if let Ok(path) = std::env::var("TLINK_BIN") {
-        let mut c = Command::new(&path);
-        c.args(args);
-        return c;
+        return path;
     }
-    let mut c = Command::new("cargo");
-    c.arg("run").arg("--").args(args);
+    let o = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .output()
+        .expect("cargo metadata failed");
+    let meta: serde_json::Value =
+        serde_json::from_slice(&o.stdout).expect("invalid cargo metadata");
+    let target_dir = meta["target_directory"]
+        .as_str()
+        .expect("no target_directory in metadata");
+    format!("{target_dir}/debug/tlink")
+}
+
+fn tlink_cmd(args: &[&str]) -> Command {
+    let bin = tlink_bin();
+    let mut c = Command::new(&bin);
+    c.args(args);
     c
 }
 
 fn check_bash_syntax(script: &str, label: &str) -> bool {
-    use std::path::PathBuf;
     let tmp =
         std::env::temp_dir().join(format!("tlink-syntax-{}-{}.sh", std::process::id(), label));
     if std::fs::write(&tmp, script).is_err() {
@@ -254,9 +267,35 @@ fn test_tmux_pane() {
     assert!(!tmux_fmt("#{pane_index}").is_empty());
 }
 
+/// Write a mock tmux script that fails switch-client (simulating no attached client)
+/// but delegates other subcommands to the real tmux binary at `real_tmux`.
+fn write_mock_tmux(dir: &PathBuf, real_tmux: &str) -> PathBuf {
+    let mock_path = dir.join("tmux");
+    let script = format!(
+        r##"#!/bin/bash
+# Mock: fail switch-client to simulate detached state
+if [ "$1" = "switch-client" ]; then
+    echo "MOCK: switch-client would fail" >&2
+    exit 1
+fi
+# Mock: return no clients so detect_from_running_tmux() returns None
+if [ "$1" = "list-clients" ]; then
+    echo "MOCK: no clients" >&2
+    exit 0
+fi
+exec {real_tmux} "$@"
+"##
+    );
+    fs::write(&mock_path, &script).unwrap();
+    let mut perm = fs::metadata(&mock_path).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(&mock_path, perm).unwrap();
+    mock_path
+}
+
 #[test]
 fn test_tlink_open() {
-    let s = tmux_fmt("#{session_name}");
+    let s = tmux_fmt("#{{session_name}}");
     let o = tlink_cmd(&["open", &format!("tmux://{s}")])
         .output()
         .unwrap();
@@ -264,6 +303,131 @@ fn test_tlink_open() {
         let stderr = String::from_utf8_lossy(&o.stderr);
         eprintln!("  tlink open skipped (expected on headless CI): {stderr}");
     }
+}
+
+/// Test that `tlink open` gracefully handles the case where no tmux client is
+/// attached (simulated by a mock tmux that fails switch-client) and no
+/// terminal adapter is configured.
+#[test]
+fn test_tlink_open_detached_no_adapter() {
+    let mock_dir = std::env::temp_dir().join(format!("tlink-test-na-{}", std::process::id()));
+    let config_path = mock_dir.join("config.toml");
+    fs::create_dir_all(&mock_dir).unwrap();
+    // Write empty config (no terminal adapter)
+    fs::write(&config_path, b"").unwrap();
+
+    let real_tmux = Command::new("which").arg("tmux").output().unwrap();
+    let real_tmux = String::from_utf8_lossy(&real_tmux.stdout)
+        .trim()
+        .to_string();
+    assert!(!real_tmux.is_empty(), "tmux must be installed");
+
+    let mock = write_mock_tmux(&mock_dir, &real_tmux);
+    let mock_dir_str = mock.parent().unwrap().to_string_lossy().to_string();
+
+    let session_name = format!("tlink-test-na-{}", std::process::id());
+    let _ = Command::new(&real_tmux)
+        .args(["new-session", "-d", "-s", &session_name])
+        .output();
+
+    let path_val = format!(
+        "{mock_dir_str}:{}",
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = tlink_cmd(&["open", &format!("tmux://{session_name}/0/0")])
+        .env("PATH", &path_val)
+        .env("TLINK_LOG", "1")
+        .env("TLINK_CONFIG", config_path.to_str().unwrap())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    eprintln!("=== test_tlink_open_detached_no_adapter ===");
+    eprintln!("exit:  {}", output.status);
+    eprintln!("stdout:\n{stdout}");
+    eprintln!("stderr:\n{stderr}");
+
+    assert!(
+        matches!(output.status.success(), false),
+        "expected failure when no adapter configured"
+    );
+    assert!(
+        stderr.contains("no terminal adapter configured"),
+        "stderr should mention missing adapter"
+    );
+    assert!(
+        stderr.contains("[tlink] execute_switch: switch-client FAILED"),
+        "logs should show switch-client failure"
+    );
+
+    let _ = Command::new(&real_tmux)
+        .args(["kill-session", "-t", &session_name])
+        .output();
+    fs::remove_dir_all(&mock_dir).ok();
+}
+
+/// Test the fallback path when a terminal adapter IS configured.
+/// The mock forces switch-client to fail, then attach_tmux should be called.
+#[test]
+fn test_tlink_open_detached_with_adapter() {
+    let mock_dir = std::env::temp_dir().join(format!("tlink-test-wa-{}", std::process::id()));
+    let config_path = mock_dir.join("config.toml");
+    fs::create_dir_all(&mock_dir).unwrap();
+    // Write config with Terminal.app adapter
+    fs::write(&config_path, r#"terminal = "Terminal.app""#).unwrap();
+
+    let real_tmux = Command::new("which").arg("tmux").output().unwrap();
+    let real_tmux = String::from_utf8_lossy(&real_tmux.stdout)
+        .trim()
+        .to_string();
+    assert!(!real_tmux.is_empty(), "tmux must be installed");
+
+    let mock = write_mock_tmux(&mock_dir, &real_tmux);
+    let mock_dir_str = mock.parent().unwrap().to_string_lossy().to_string();
+
+    let session_name = format!("tlink-test-wa-{}", std::process::id());
+    let _ = Command::new(&real_tmux)
+        .args(["new-session", "-d", "-s", &session_name])
+        .output();
+
+    let path_val = format!(
+        "{mock_dir_str}:{}",
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let output = tlink_cmd(&["open", &format!("tmux://{session_name}/0/0")])
+        .env("PATH", &path_val)
+        .env("TLINK_LOG", "1")
+        .env("TLINK_CONFIG", config_path.to_str().unwrap())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    eprintln!("=== test_tlink_open_detached_with_adapter ===");
+    eprintln!("exit:  {}", output.status);
+    eprintln!("stdout:\n{stdout}");
+    eprintln!("stderr:\n{stderr}");
+
+    assert!(
+        output.status.success(),
+        "expected success when adapter configured for fallback"
+    );
+    assert!(
+        stderr.contains("[tlink] execute_switch: switch-client FAILED"),
+        "logs should show switch-client failure"
+    );
+    assert!(
+        stderr.contains("[tlink] execute_switch: falling back to attach_tmux"),
+        "logs should show attach_tmux fallback"
+    );
+
+    let _ = Command::new(&real_tmux)
+        .args(["kill-session", "-t", &session_name])
+        .output();
+    fs::remove_dir_all(&mock_dir).ok();
 }
 
 #[test]

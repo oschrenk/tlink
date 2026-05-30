@@ -135,14 +135,36 @@ pub fn make_adapter(method: &str) -> Box<dyn NotificationAdapter> {
     }
 }
 
-pub fn run(session: &str, window: &str, pane: &str) -> Result<()> {
+pub fn run(session: &str, window: &str, pane: &str, term: &str) -> Result<()> {
     let mut stdin = String::new();
     std::io::stdin().read_to_string(&mut stdin)?;
 
     let payload: Payload = serde_json::from_str(&stdin).unwrap_or_default();
     let (title, message, _choices) = resolve(&payload);
 
-    let deeplink = format!("tmux://{}/{}/{}", session, window, pane);
+    fn percent_encode(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        for &b in s.as_bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    out.push(b as char);
+                }
+                _ => {
+                    out.push_str(&format!("%{:02X}", b));
+                }
+            }
+        }
+        out
+    }
+
+    let deeplink = if term.is_empty() {
+        format!("tmux://{}/{}/{}", session, window, pane)
+    } else {
+        // Extract just the terminal name (first word before space/version)
+        let term_name = term.split_whitespace().next().unwrap_or(term);
+        let encoded = percent_encode(term_name);
+        format!("tmux://{}/{}/{}?term={}", session, window, pane, encoded)
+    };
     let location = format!("{} > {} > {}", session, window, pane);
 
     let config = crate::config::load().unwrap_or_default();
