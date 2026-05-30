@@ -13,7 +13,7 @@ open tmux://work/editor/0
 
 `tlink` registers the `tmux://` URI scheme and routes clicks to the exact pane — flashing the border and showing a status-bar toast on arrival. It also ships notification addons that ping you when an AI coding agent finishes a task.
 
-> **Ghostty note:** On Ghostty, `open tmux://...` opens a new tab for the target session instead of switching the current one. This is because Ghostty doesn't expose an API to focus an existing tab. Other terminals (Terminal.app, iTerm2, Kitty, WezTerm) switch in place normally.
+> **Ghostty note:** Ghostty doesn't expose an API to focus a specific tab or open a new window with a command without triggering a macOS security dialog. When you click a `tmux://` link, it works the same as other terminals (switches the session in place), but if you're in a different tab you'll need to switch to the tmux tab manually.
 
 ## Install
 
