@@ -7,9 +7,20 @@ use std::process::{Command, Stdio};
 fn tlink_cmd(args: &[&str]) -> Command {
     // TLINK_BIN env var set by CI workflow to a pre-built binary copy
     if let Ok(path) = std::env::var("TLINK_BIN") {
-        let mut c = Command::new(&path);
-        c.args(args);
-        return c;
+        let exists = std::path::Path::new(&path).is_file();
+        let can_exec = Command::new(&path)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        eprintln!("[tlink] TLINK_BIN={path} exists={exists} exec={can_exec:?}");
+        if let Ok(status) = can_exec {
+            if status.success() {
+                let mut c = Command::new(&path);
+                c.args(args);
+                return c;
+            }
+        }
     }
 
     // TLINK_DEBUG_BIN fallback for local development
