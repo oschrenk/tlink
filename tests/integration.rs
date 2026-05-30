@@ -260,7 +260,11 @@ fn test_tlink_open() {
     let o = tlink_cmd(&["open", &format!("tmux://{s}")])
         .output()
         .unwrap();
-    assert!(o.status.success());
+    assert!(
+        o.status.success(),
+        "tlink open failed: stderr={}",
+        String::from_utf8_lossy(&o.stderr)
+    );
 }
 
 #[test]
