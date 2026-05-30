@@ -34,25 +34,13 @@ jobs:
           tmux new-session -d -s ci-test 2>/dev/null || true
           tmux rename-window -t ci-test:0 test-window 2>/dev/null || true
 
-      # Check if the workspace has noexec (some CI runners mount with noexec,
-      # preventing binary execution)
-      - name: Check for noexec mount
-        run: |
-          echo "target/debug mount info:"
-          df -T target/debug 2>/dev/null || stat -f target/debug 2>/dev/null || mount | grep "$PWD" || echo "no mount info"
-          touch /tmp/test-exec && chmod +x /tmp/test-exec && /tmp/test-exec && echo "exec OK in /tmp" || echo "exec FAIL in /tmp"
-          touch target/debug/test-exec 2>/dev/null && chmod +x target/debug/test-exec 2>/dev/null && target/debug/test-exec 2>&1 && echo "exec OK in target" || echo "exec FAIL in target"
-
+      # Pre-build the binary so `cargo run` inside integration tests doesn't
+      # need to compile (avoid re-entrant cargo lock contention)
       - name: Build binary
         run: cargo build --bin tlink
 
-      - name: Test binary execution
-        run: |
-          ls -la target/debug/tlink
-          file target/debug/tlink
-          target/debug/tlink --version && echo "BINARY OK" || echo "BINARY EXEC FAILED"
-
-      - name: Run all tests
+      # Run all tests — unit (no subprocess) + integration (uses cargo run)
+      - name: Run tests
         run: cargo test -- --test-threads=4
 
       - name: Clean up tmux

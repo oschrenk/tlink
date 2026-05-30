@@ -1,28 +1,11 @@
 use std::io::Write;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 /// Build a Command for running the tlink binary.
 /// Prefers the prebuilt binary; falls back to `cargo run`.
 fn tlink_cmd(args: &[&str]) -> Command {
-    for p in [
-        std::env::var("CARGO_MANIFEST_DIR")
-            .ok()
-            .map(|m| PathBuf::from(m).join("target/debug/tlink")),
-        Some(PathBuf::from("target/debug/tlink")),
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().and_then(|p| p.parent()).map(|p| p.join("tlink"))),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if p.is_file() {
-            let mut c = Command::new(&p);
-            c.args(args);
-            return c;
-        }
-    }
+    // Always use `cargo run`. The binary at target/debug/tlink becomes a test
+    // harness after `cargo test --bin tlink`, so it can't be invoked directly.
     let mut c = Command::new("cargo");
     c.arg("run").arg("--").args(args);
     c
