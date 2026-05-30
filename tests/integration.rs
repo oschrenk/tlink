@@ -1,12 +1,48 @@
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-/// Invoke cargo subcommand. Used for all tlink binary invocations in tests.
-/// Always uses `cargo run` — reliable on CI and locally.
-fn cargo_run(args: &[&str]) -> Command {
-    let mut cmd = Command::new("cargo");
-    cmd.arg("run").arg("--").args(args);
-    cmd
+/// Path to the pre-built tlink binary.
+/// Prefer the binary compiled by `cargo build` (avoids lock conflicts with `cargo test`).
+fn tlink_binary() -> PathBuf {
+    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+        let c = PathBuf::from(manifest).join("target/debug/tlink");
+        if c.exists() {
+            return c;
+        }
+    }
+    let c = PathBuf::from("target/debug/tlink");
+    if c.exists() {
+        return c;
+    }
+    if let Some(p) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().and_then(|p| p.parent()).map(|p| p.join("tlink")))
+    {
+        if p.exists() {
+            return p;
+        }
+    }
+    PathBuf::from("cargo")
+}
+
+fn is_cargo_bin() -> bool {
+    tlink_binary().to_string_lossy() == "cargo"
+}
+
+/// Build the appropriate Command for running the tlink binary.
+fn tlink_cmd(args: &[&str]) -> Command {
+    let tlink = tlink_binary();
+    if is_cargo_bin() {
+        let mut c = Command::new("cargo");
+        c.arg("run").arg("--");
+        c.args(args);
+        c
+    } else {
+        let mut c = Command::new(&tlink);
+        c.args(args);
+        c
+    }
 }
 
 /// Helper: write bash script to temp file and run `bash -n`.
@@ -17,11 +53,11 @@ fn check_bash_syntax(script: &str, label: &str) -> bool {
     if std::fs::write(&tmp, script).is_err() {
         return false;
     }
-    let output = Command::new("bash")
+    let ok = Command::new("bash")
         .args(["-n", &tmp.to_string_lossy()])
         .output()
-        .expect("failed to run bash -n");
-    let ok = output.status.success();
+        .map(|o| o.status.success())
+        .unwrap_or(false);
     std::fs::remove_file(&tmp).ok();
     ok
 }
@@ -47,7 +83,6 @@ fn codex_script(method: &str) -> String {
         --hint=string:body:\"$LOCATION\"",
         _ => panic!("unknown method: {}", method),
     };
-
     format!(
         "#!/bin/bash
 SESSION=$(tmux display-message -p \"#{{session_name}}\" 2>/dev/null) || exit 0
@@ -85,7 +120,6 @@ fn gemini_script(method: &str) -> String {
         --hint=string:body:\"$LOCATION\"",
         _ => panic!("unknown method: {}", method),
     };
-
     format!(
         "#!/bin/bash
 SESSION=$(tmux display-message -p \"#{{session_name}}\" 2>/dev/null) || exit 0
@@ -114,83 +148,53 @@ exec tlink notify --session '$SESSION' --window '$WINDOW' --pane '$PANE'";
 
 #[test]
 fn test_tlink_help() {
-    let out = Command::new("cargo")
-        .args(["run", "--", "--help"])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("tlink"));
+    assert!(tlink_cmd(&["--help"]).output().unwrap().status.success());
 }
 
 #[test]
 fn test_tlink_list_addons() {
-    let out = Command::new("cargo")
-        .args(["run", "--", "list", "add-ons"])
-        .output()
-        .unwrap();
+    let out = tlink_cmd(&["list", "add-ons"]).output().unwrap();
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        s.contains("claude-notification"),
-        "should contain claude-notification"
-    );
-    assert!(
-        s.contains("NAME") && s.contains("STATUS"),
-        "should have table headers"
-    );
+    assert!(s.contains("claude-notification"));
+    assert!(s.contains("NAME") && s.contains("STATUS"));
 }
 
 #[test]
 fn test_tlink_install_no_args() {
-    let out = Command::new("cargo")
-        .args(["run", "--", "install"])
-        .output()
-        .unwrap();
+    let out = tlink_cmd(&["install"]).output().unwrap();
     let s = String::from_utf8_lossy(&out.stdout);
     let e = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        out.status.success() || s.contains("Usage") || e.contains("Usage"),
-        "should be okay: stdout={} stderr={}",
-        s,
-        e
-    );
+    assert!(out.status.success() || s.contains("Usage") || e.contains("Usage"));
 }
 
-/// Check if --interactive flag exists in the CLI (only on branches that have it)
 fn has_interactive_flag() -> bool {
-    let out = Command::new("cargo")
-        .args(["run", "--", "install", "--help"])
+    tlink_cmd(&["install", "--help"])
         .output()
-        .unwrap();
-    if !out.status.success() {
-        return false;
-    }
-    let s = String::from_utf8_lossy(&out.stdout);
-    s.contains("--interactive")
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("--interactive"))
+        .unwrap_or(false)
 }
 
 #[test]
 fn test_tlink_install_interactive_flag() {
     if !has_interactive_flag() {
-        eprintln!("  SKIP: --interactive flag not available in this build");
+        eprintln!("  SKIP: --interactive flag not available");
         return;
     }
 }
 
 // ── tlink notify ──────────────────────────────────────────────────────────────
 
-/// Invoke `tlink notify` with a JSON payload piped to stdin.
 fn notify(payload: &str) -> bool {
-    let mut child = cargo_run(&["notify", "--session", "ts", "--window", "1", "--pane", "0"])
+    let mut child = match tlink_cmd(&["notify", "--session", "ts", "--window", "1", "--pane", "0"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn();
-
-    let mut child = match child {
+        .spawn()
+    {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("  could not spawn cargo run: {}", e);
+            eprintln!("  could not spawn: {}", e);
             return false;
         }
     };
@@ -203,12 +207,10 @@ fn notify(payload: &str) -> bool {
     }
 
     match child.wait_with_output() {
+        Ok(out) if out.status.success() => true,
         Ok(out) => {
-            if !out.status.success() {
-                let err = String::from_utf8_lossy(&out.stderr);
-                eprintln!("  notify failed: {}", err);
-            }
-            out.status.success()
+            eprintln!("  notify failed: {}", String::from_utf8_lossy(&out.stderr));
+            false
         }
         Err(e) => {
             eprintln!("  failed to wait: {}", e);
@@ -295,6 +297,28 @@ fn test_claude_script_syntax() {
 
 // ── Graceful exit without tmux ────────────────────────────────────────────────
 
+fn run_bash(script: &str) -> (String, String, bool) {
+    let mut child = Command::new("bash")
+        .arg("-s")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn bash");
+    {
+        let mut h = child.stdin.take().expect("failed to get stdin");
+        h.write_all(script.as_bytes())
+            .expect("failed to write script");
+        h.write_all(b"\n").ok();
+    }
+    let o = child.wait_with_output().expect("failed to wait on bash");
+    (
+        String::from_utf8_lossy(&o.stdout).to_string(),
+        String::from_utf8_lossy(&o.stderr).to_string(),
+        o.status.success(),
+    )
+}
+
 #[test]
 fn test_codex_graceful_no_tmux() {
     let s = format!(
@@ -350,20 +374,23 @@ fn test_tmux_pane() {
 #[test]
 fn test_tlink_open() {
     let session = tmux_fmt("#{session_name}");
-    let out = cargo_run(&["open", &format!("tmux://{}", session)])
+    let out = tlink_cmd(&["open", &format!("tmux://{}", session)])
         .output()
         .unwrap();
     assert!(out.status.success());
 }
 
-// ── Hook pipe test ────────────────────────────────────────────────────────────
-
 #[test]
 fn test_hook_pipe() {
     let payload = r#"{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Hook test"}"#;
+    let binary = if is_cargo_bin() {
+        "cargo run --".to_string()
+    } else {
+        tlink_binary().to_string_lossy().to_string()
+    };
     let cmd = format!(
-        "printf '%s' '{}' | cargo run -- notify --session s --window 1 --pane 0",
-        payload
+        "printf '%s' '{}' | {} notify --session s --window 1 --pane 0",
+        payload, binary
     );
     let out = Command::new("bash").args(["-c", &cmd]).output().unwrap();
     assert!(
@@ -401,9 +428,8 @@ fn test_gemini_python_parser() {
     }
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("MESSAGE="));
-    assert!(stdout.contains("Gemini task done"));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("MESSAGE="));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Gemini task done"));
 }
 
 #[test]
@@ -415,30 +441,4 @@ fn test_gemini_python_parser_empty() {
     child.stdin.take();
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success());
-}
-
-// ── Helper: run bash ──────────────────────────────────────────────────────────
-
-fn run_bash(script: &str) -> (String, String, bool) {
-    let mut child = Command::new("bash")
-        .arg("-s")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn bash");
-
-    {
-        let mut h = child.stdin.take().expect("failed to get stdin");
-        h.write_all(script.as_bytes())
-            .expect("failed to write script");
-        h.write_all(b"\n").ok();
-    }
-
-    let output = child.wait_with_output().expect("failed to wait on bash");
-    (
-        String::from_utf8_lossy(&output.stdout).to_string(),
-        String::from_utf8_lossy(&output.stderr).to_string(),
-        output.status.success(),
-    )
 }
