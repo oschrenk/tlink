@@ -231,41 +231,23 @@ fn notify(payload: &str) -> bool {
         &["notify", "--session", "ts", "--window", "1", "--pane", "0"]
     };
 
-    let mut child = match Command::new(if is_cargo {
-        "cargo"
-    } else {
-        tlink.to_str().unwrap_or("tlink")
-    })
-    .args(args)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("  failed to spawn: {}", e);
-            return false;
-        }
-    };
+    let cmd = if is_cargo { "cargo" } else { "tlink" };
+    let out = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output();
 
-    if let Some(mut h) = child.stdin.take() {
-        if let Err(e) = h.write_all(payload.as_bytes()) {
-            eprintln!("  failed to write payload: {}", e);
-            return false;
-        }
-    }
-
-    match child.wait_with_output() {
-        Ok(out) => {
-            if !out.status.success() {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                eprintln!("  tlink notify failed ({}): {}", tlink.display(), stderr);
-            }
-            out.status.success()
+    match out {
+        Ok(o) if o.status.success() => true,
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            eprintln!("  {} notify failed: {}", cmd, err);
+            false
         }
         Err(e) => {
-            eprintln!("  failed to wait: {}", e);
+            eprintln!("  could not execute '{}': {}", cmd, e);
             false
         }
     }
