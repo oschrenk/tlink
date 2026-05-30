@@ -34,16 +34,20 @@ jobs:
           tmux new-session -d -s ci-test 2>/dev/null || true
           tmux rename-window -t ci-test:0 test-window 2>/dev/null || true
 
-      # Build all test targets without running them
-      - name: Compile all targets
-        run: cargo test --no-run 2>&1
+      # Build the main binary separately (avoids test-harness transformation)
+      - name: Build main binary
+        run: cargo build --bin tlink
 
-      # Run unit tests via the binary (no cargo lock needed)
+      # Run unit tests (using cargo test, no subprocess spawning needed)
       - name: Run unit tests
         run: cargo test --bin tlink
 
-      # Run integration test binary directly to avoid cargo lock
-      # conflicts (integration tests spawn tlink notify subprocess)
+      # Build and run integration tests separately
+      # Note: must NOT combine build & test in one cargo invocation because
+      # tlink_cargo would become a test harness binary (Command::new fails)
+      - name: Build integration tests
+        run: cargo test --test integration --no-run
+
       - name: Run integration tests
         run: |
           INTEG_BIN=$(find target/debug/deps -name 'integration-*' -type f ! -name '*.d' | head -1)
