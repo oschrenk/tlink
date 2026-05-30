@@ -188,9 +188,10 @@ fn execute_switch(
         // Last resort: attach directly in the current terminal.
         // This is the key path for Ghostty users running from a shell —
         // it attaches the current terminal to the tmux session.
+        // -d detaches any existing client so we can attach.
         log!("execute_switch: trying direct attach-session");
         if Command::new("tmux")
-            .args(["attach-session", "-t", &tmux_target])
+            .args(["attach-session", "-d", "-t", &tmux_target])
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
@@ -199,7 +200,7 @@ fn execute_switch(
         }
 
         // Nothing worked — print a helpful hint
-        eprintln!("Could not open tmux session. Run:\n  tmux attach-session -t {tmux_target}");
+        eprintln!("Could not open tmux session. Run:\n  tmux attach-session -d -t {tmux_target}");
         return Ok(());
     }
 
