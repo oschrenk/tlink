@@ -34,10 +34,10 @@ jobs:
           tmux new-session -d -s ci-test 2>/dev/null || true
           tmux rename-window -t ci-test:0 test-window 2>/dev/null || true
 
-      - name: Run unit tests
-        run: cargo test --lib
+      - name: Run unit tests (binary crate — use --bin)
+        run: cargo test --bin tlink
 
-      - name: Build binary (for integration tests that use cargo run)
+      - name: Build binary (for integration tests that invoke cargo run)
         run: cargo build
 
       - name: Run integration tests
