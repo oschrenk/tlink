@@ -1,42 +1,12 @@
 use std::io::Write;
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-/// Find the tlink binary.  On CI we have target/debug/tlink from the build step;
-/// locally `cargo run` works too.
-fn tlink_binary() -> PathBuf {
-    // 1. Same directory as the test runner (target/debug/deps/ → target/debug/)
-    if let Some(exe_parent) = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-    {
-        // Check target/debug/ (parent of deps/)
-        if let Some(debug_dir) = exe_parent.parent() {
-            let candidate = debug_dir.join("tlink");
-            if candidate.exists() {
-                return candidate;
-            }
-        }
-        // Check same dir
-        let candidate = exe_parent.join("tlink");
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    // 2. Relative to CARGO_MANIFEST_DIR
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        let candidate = PathBuf::from(manifest).join("target/debug/tlink");
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    // 3. Absolute fallback
-    let global = PathBuf::from("target/debug/tlink");
-    if global.exists() {
-        return global;
-    }
-    // 4. Last resort: use `cargo` as command name (caller will add "run")
-    PathBuf::from("cargo")
+/// Invoke cargo subcommand. Used for all tlink binary invocations in tests.
+/// Always uses `cargo run` — reliable on CI and locally.
+fn cargo_run(args: &[&str]) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("run").arg("--").args(args);
+    cmd
 }
 
 /// Helper: write bash script to temp file and run `bash -n`.
@@ -210,44 +180,38 @@ fn test_tlink_install_interactive_flag() {
 // ── tlink notify ──────────────────────────────────────────────────────────────
 
 /// Invoke `tlink notify` with a JSON payload piped to stdin.
-/// Uses the pre-built binary when available, falls back to cargo run.
 fn notify(payload: &str) -> bool {
-    let tlink = tlink_binary();
-    let is_cargo = tlink.to_string_lossy() == "cargo";
-
-    let args: &[&str] = if is_cargo {
-        &[
-            "run",
-            "--",
-            "notify",
-            "--session",
-            "ts",
-            "--window",
-            "1",
-            "--pane",
-            "0",
-        ]
-    } else {
-        &["notify", "--session", "ts", "--window", "1", "--pane", "0"]
-    };
-
-    let cmd = if is_cargo { "cargo" } else { "tlink" };
-    let out = Command::new(cmd)
-        .args(args)
+    let mut child = cargo_run(&["notify", "--session", "ts", "--window", "1", "--pane", "0"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .output();
+        .spawn();
 
-    match out {
-        Ok(o) if o.status.success() => true,
-        Ok(o) => {
-            let err = String::from_utf8_lossy(&o.stderr);
-            eprintln!("  {} notify failed: {}", cmd, err);
-            false
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  could not spawn cargo run: {}", e);
+            return false;
+        }
+    };
+
+    if let Some(mut h) = child.stdin.take() {
+        if let Err(e) = h.write_all(payload.as_bytes()) {
+            eprintln!("  failed to write payload: {}", e);
+            return false;
+        }
+    }
+
+    match child.wait_with_output() {
+        Ok(out) => {
+            if !out.status.success() {
+                let err = String::from_utf8_lossy(&out.stderr);
+                eprintln!("  notify failed: {}", err);
+            }
+            out.status.success()
         }
         Err(e) => {
-            eprintln!("  could not execute '{}': {}", cmd, e);
+            eprintln!("  failed to wait: {}", e);
             false
         }
     }
@@ -386,40 +350,21 @@ fn test_tmux_pane() {
 #[test]
 fn test_tlink_open() {
     let session = tmux_fmt("#{session_name}");
-    let tlink = if tlink_binary().to_string_lossy() == "cargo" {
-        let out = Command::new("cargo")
-            .args(["run", "--", "open", &format!("tmux://{}", session)])
-            .output()
-            .unwrap();
-        out.status.success()
-    } else {
-        let out = Command::new(&tlink_binary())
-            .args(["open", &format!("tmux://{}", session)])
-            .output()
-            .unwrap();
-        out.status.success()
-    };
-    assert!(tlink);
+    let out = cargo_run(&["open", &format!("tmux://{}", session)])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
 }
 
 // ── Hook pipe test ────────────────────────────────────────────────────────────
 
 #[test]
 fn test_hook_pipe() {
-    let tlink = tlink_binary();
     let payload = r#"{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Hook test"}"#;
-    let cmd = if tlink.to_string_lossy() == "cargo" {
-        format!(
-            "printf '%s' '{}' | cargo run -- notify --session s --window 1 --pane 0",
-            payload
-        )
-    } else {
-        format!(
-            "printf '%s' '{}' | {} notify --session s --window 1 --pane 0",
-            payload,
-            tlink.to_string_lossy()
-        )
-    };
+    let cmd = format!(
+        "printf '%s' '{}' | cargo run -- notify --session s --window 1 --pane 0",
+        payload
+    );
     let out = Command::new("bash").args(["-c", &cmd]).output().unwrap();
     assert!(
         out.status.success(),
