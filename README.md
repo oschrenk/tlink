@@ -53,6 +53,7 @@ open tmux://mysession/editor/1
 | `tlink install claude-notification` | Install the Claude Code notification addon |
 | `tlink install codex-notification` | Install the Codex CLI notification addon |
 | `tlink install gemini-notification` | Install the Gemini CLI notification addon |
+| `tlink install pi-notification` | Install the Pi agent notification addon |
 | `tlink install --interactive` | Interactive add-on selector (multi-select) |
 | `tlink status` | Show registration state and active sessions |
 | `tlink doctor` | Run diagnostic checks |
@@ -98,6 +99,16 @@ tlink install gemini-notification
 
 → [Full docs](docs/gemini-notification.md)
 
+### pi-notification
+
+Desktop notifications from Pi agent events.
+
+```bash
+tlink install pi-notification
+```
+
+→ [Full docs](docs/pi-notification.md)
+
 ## Platform support
 
 | Feature | macOS | Linux |
@@ -108,6 +119,7 @@ tlink install gemini-notification
 | claude-notification addon | ✓ (terminal-notifier) | ✓ (dunstify / notify-send) |
 | codex-notification addon | ✓ (terminal-notifier) | ✓ (dunstify / notify-send) |
 | gemini-notification addon | ✓ (terminal-notifier) | ✓ (dunstify / notify-send) |
+| pi-notification addon | ✓ (terminal-notifier) | ✓ (dunstify / notify-send) |
 
 ## License
 
