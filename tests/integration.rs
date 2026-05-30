@@ -1,12 +1,25 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-/// Build a Command that will run the tlink binary.
-/// Uses `cargo run --offline` to avoid lock conflicts with `cargo test`.
+/// Build a Command to run the tlink binary.
+/// Strategy: try the prebuilt binary first (avoids cargo lock conflicts),
+/// fall back to `cargo run`.
 fn tlink_cmd(args: &[&str]) -> Command {
+    // Candidate paths in priority order
+    let candidates = [
+        std::env::var("CARGO_MANIFEST_DIR")
+            .map(|m| std::path::PathBuf::from(m).join("target/debug/tlink")),
+        Ok(std::path::PathBuf::from("target/debug/tlink")),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if candidate.is_file() {
+            let mut c = Command::new(&candidate);
+            c.args(args);
+            return c;
+        }
+    }
     let mut c = Command::new("cargo");
-    c.arg("run").arg("--offline").arg("--");
-    c.args(args);
+    c.arg("run").arg("--").args(args);
     c
 }
 
