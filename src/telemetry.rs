@@ -108,7 +108,13 @@ pub fn init() {
 
 /// Resolve the Sentry DSN from env var, file, or config.
 fn resolve_dsn() -> Option<String> {
-    // 1. Env var
+    // 0. Compile-time DSN (embedded during release builds)
+    if let Some(dsn) = option_env!("TLINK_SENTRY_DSN") {
+        if !dsn.is_empty() {
+            return Some(dsn.to_string());
+        }
+    }
+    // 1. Runtime env var overrides the baked-in DSN
     if let Ok(dsn) = std::env::var("TLINK_SENTRY_DSN") {
         if !dsn.is_empty() {
             return Some(dsn);
@@ -228,6 +234,11 @@ pub fn record_event(name: &str, properties: Option<serde_json::Value>) {
         message: Some(name.into()),
         ..Default::default()
     });
+
+    // Send to Sentry as a non-error activity message.
+    // This fires only when a DSN is configured (release builds or manual setup).
+    // Groups activity events by name so Sentry aggregates them automatically.
+    sentry::capture_message(&format!("activity: {name}"), sentry::Level::Info);
 }
 
 // ── CLI actions ──────────────────────────────────────────────────────────────

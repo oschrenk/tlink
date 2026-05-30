@@ -68,6 +68,8 @@ jobs:
           tool: cross
 
       - name: Build
+        env:
+          TLINK_SENTRY_DSN: ${{ secrets.TLINK_SENTRY_DSN }}
         run: ${{ matrix.use_cross && 'cross' || 'cargo' }} build --release --target ${{ matrix.target }}
 
       - name: Stage artifact

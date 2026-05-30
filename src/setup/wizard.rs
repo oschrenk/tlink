@@ -20,6 +20,9 @@ pub enum WizardState {
     Confirm {
         terminal: String,
     },
+    TelemetryPrompt {
+        terminal: String,
+    },
     Installing {
         terminal_name: String,
     },
@@ -98,11 +101,21 @@ pub fn next_state(state: WizardState, key: KeyCode) -> WizardState {
         }
 
         (WizardState::Confirm { terminal }, KeyCode::Enter | KeyCode::Char('y')) => {
+            WizardState::TelemetryPrompt { terminal }
+        }
+        (WizardState::Confirm { .. }, KeyCode::Char('n') | KeyCode::Esc) => WizardState::Cancelled,
+
+        (WizardState::TelemetryPrompt { terminal }, KeyCode::Enter | KeyCode::Char('y')) => {
             WizardState::Installing {
                 terminal_name: terminal,
             }
         }
-        (WizardState::Confirm { .. }, KeyCode::Char('n') | KeyCode::Esc) => WizardState::Cancelled,
+        (WizardState::TelemetryPrompt { terminal }, KeyCode::Char('n')) => {
+            WizardState::Installing {
+                terminal_name: terminal,
+            }
+        }
+        (WizardState::TelemetryPrompt { .. }, KeyCode::Esc) => WizardState::Cancelled,
 
         (WizardState::Verify { terminal_name, .. }, KeyCode::Enter) => WizardState::Done {
             terminal: terminal_name,
@@ -141,12 +154,24 @@ pub fn run_wizard() -> Result<Option<String>> {
 
 fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<Option<String>> {
     let mut state = WizardState::Welcome;
+    // Track telemetry choice during the wizard (set in next_state transition)
+    let mut telemetry_opt_in: Option<bool> = None;
 
     loop {
         terminal.draw(|f| render(f, &state))?;
 
         match state.clone() {
             WizardState::Installing { terminal_name } => {
+                // Apply telemetry choice before installing
+                match telemetry_opt_in {
+                    Some(true) => {
+                        let _ = crate::telemetry::enable(None);
+                    }
+                    Some(false) => {
+                        let _ = crate::telemetry::disable();
+                    }
+                    None => {}
+                }
                 let config = crate::config::Config {
                     terminal: Some(terminal_name.clone()),
                     ..Default::default()
@@ -167,6 +192,18 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<O
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(KeyEvent { code, .. }) = event::read()? {
+                // Capture telemetry choice before transitioning
+                if matches!(state, WizardState::TelemetryPrompt { .. }) {
+                    match code {
+                        KeyCode::Enter | KeyCode::Char('y') => {
+                            telemetry_opt_in = Some(true);
+                        }
+                        KeyCode::Char('n') => {
+                            telemetry_opt_in = Some(false);
+                        }
+                        _ => {}
+                    }
+                }
                 state = next_state(state, code);
             }
         }
@@ -238,6 +275,25 @@ fn render(f: &mut ratatui::Frame, state: &WizardState) {
                     Line::from(""),
                     Line::from(Span::styled(
                         "Enter/y to confirm  •  n/Esc to cancel",
+                        Style::default().fg(Color::DarkGray),
+                    )),
+                ]),
+                content,
+            );
+        }
+        WizardState::TelemetryPrompt { .. } => {
+            f.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        "Help improve tlink?",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from("Share anonymous usage data to help me improve tlink."),
+                    Line::from("No personal info is collected. See docs for details."),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Y/Enter: yes, enable telemetry  •  n: no  •  Esc: cancel",
                         Style::default().fg(Color::DarkGray),
                     )),
                 ]),
@@ -372,16 +428,52 @@ mod tests {
     }
 
     #[test]
-    fn test_confirm_enter_goes_to_installing() {
+    fn test_confirm_enter_goes_to_telemetry_prompt() {
         let state = WizardState::Confirm {
             terminal: "iTerm2".into(),
         };
         assert_eq!(
             next_state(state, KeyCode::Enter),
-            WizardState::Installing {
-                terminal_name: "iTerm2".into()
+            WizardState::TelemetryPrompt {
+                terminal: "iTerm2".into()
             }
         );
+    }
+
+    #[test]
+    fn test_telemetry_y_goes_to_installing() {
+        let state = WizardState::TelemetryPrompt {
+            terminal: "Ghostty".into(),
+        };
+        let next = next_state(state, KeyCode::Char('y'));
+        assert_eq!(
+            next,
+            WizardState::Installing {
+                terminal_name: "Ghostty".into()
+            }
+        );
+    }
+
+    #[test]
+    fn test_telemetry_n_goes_to_installing() {
+        let state = WizardState::TelemetryPrompt {
+            terminal: "Ghostty".into(),
+        };
+        let next = next_state(state, KeyCode::Char('n'));
+        assert_eq!(
+            next,
+            WizardState::Installing {
+                terminal_name: "Ghostty".into()
+            }
+        );
+    }
+
+    #[test]
+    fn test_telemetry_esc_cancels() {
+        let state = WizardState::TelemetryPrompt {
+            terminal: "iTerm2".into(),
+        };
+        assert_eq!(next_state(state, KeyCode::Esc), WizardState::Cancelled);
     }
 
     #[test]
