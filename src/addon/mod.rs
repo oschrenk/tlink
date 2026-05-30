@@ -1,5 +1,6 @@
 pub mod claude_notification;
 pub mod codex_notification;
+pub mod gemini_notification;
 
 use anyhow::{bail, Result};
 
@@ -21,6 +22,11 @@ fn registry() -> Vec<AddonInfo> {
             description: "Native desktop notification when Codex CLI finishes; click to navigate back to that tmux pane",
             installed: codex_notification::is_installed(),
         },
+        AddonInfo {
+            name: "gemini-notification",
+            description: "Native desktop notification when Gemini CLI finishes; click to navigate back to that tmux pane",
+            installed: gemini_notification::is_installed(),
+        },
     ]
 }
 
@@ -28,6 +34,7 @@ pub fn install(name: &str) -> Result<()> {
     match name {
         "claude-notification" => claude_notification::install(),
         "codex-notification" => codex_notification::install(),
+        "gemini-notification" => gemini_notification::install(),
         _ => bail!("unknown add-on '{name}'. Run `tlink list add-ons` to see available add-ons."),
     }
 }
@@ -36,6 +43,7 @@ pub fn delete(name: &str) -> Result<()> {
     match name {
         "claude-notification" => claude_notification::uninstall(),
         "codex-notification" => codex_notification::uninstall(),
+        "gemini-notification" => gemini_notification::uninstall(),
         _ => bail!("unknown add-on '{name}'."),
     }
 }
