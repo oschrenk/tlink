@@ -184,7 +184,23 @@ fn execute_switch(
             log!("execute_switch: no terminal adapter configured — bailing");
             bail!("tmux switch-client failed and no terminal adapter configured");
         }
-        return Ok(()); // toast/flash require an attached client; skip for now
+
+        // Last resort: attach directly in the current terminal.
+        // This is the key path for Ghostty users running from a shell —
+        // it attaches the current terminal to the tmux session.
+        log!("execute_switch: trying direct attach-session");
+        if Command::new("tmux")
+            .args(["attach-session", "-t", &tmux_target])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        // Nothing worked — print a helpful hint
+        eprintln!("Could not open tmux session. Run:\n  tmux attach-session -t {tmux_target}");
+        return Ok(());
     }
 
     log!("execute_switch: switch-client SUCCEEDED — client is attached");
