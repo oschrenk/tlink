@@ -34,17 +34,21 @@ jobs:
           tmux new-session -d -s ci-test 2>/dev/null || true
           tmux rename-window -t ci-test:0 test-window 2>/dev/null || true
 
-      # Build everything first (binary + test binaries) without running
+      # Build all test targets without running them
       - name: Compile all targets
-        run: cargo test --no-run -- --test-threads=4 2>&1
+        run: cargo test --no-run 2>&1
 
-      # Run the test binary directly — avoids cargo lock conflicts when
-      # tests spawn `tlink notify` via the binary
-      - name: Find and run integration test binary
+      # Run unit tests via the binary (no cargo lock needed)
+      - name: Run unit tests
+        run: cargo test --bin tlink
+
+      # Run integration test binary directly to avoid cargo lock
+      # conflicts (integration tests spawn tlink notify subprocess)
+      - name: Run integration tests
         run: |
-          TEST_BIN=$(find target/debug -maxdepth 1 -name 'integration-*' -type f | head -1)
-          echo "Test binary: $TEST_BIN"
-          $TEST_BIN --test-threads=4
+          INTEG_BIN=$(find target/debug/deps -name 'integration-*' -type f ! -name '*.d' | head -1)
+          echo "Integration test binary: $INTEG_BIN"
+          $INTEG_BIN --test-threads=4
 
       - name: Clean up tmux
         if: always()
