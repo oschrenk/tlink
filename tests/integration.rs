@@ -5,19 +5,33 @@ use std::process::{Command, Stdio};
 /// Strategy: try the prebuilt binary first (avoids cargo lock conflicts),
 /// fall back to `cargo run`.
 fn tlink_cmd(args: &[&str]) -> Command {
-    // Candidate paths in priority order
     let candidates = [
+        // Absolute path from CARGO_MANIFEST_DIR
         std::env::var("CARGO_MANIFEST_DIR")
+            .ok()
             .map(|m| std::path::PathBuf::from(m).join("target/debug/tlink")),
-        Ok(std::path::PathBuf::from("target/debug/tlink")),
+        // Relative to CWD (project root during tests)
+        Some(std::path::PathBuf::from("target/debug/tlink")),
+        // Relative to current_exe parent parent
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().and_then(|p| p.parent()).map(|p| p.join("tlink"))),
     ];
+
     for candidate in candidates.into_iter().flatten() {
+        eprintln!(
+            "[tlink] trying: {} (is_file={})",
+            candidate.display(),
+            candidate.is_file()
+        );
         if candidate.is_file() {
             let mut c = Command::new(&candidate);
             c.args(args);
             return c;
         }
     }
+
+    eprintln!("[tlink] no binary found, falling back to cargo run");
     let mut c = Command::new("cargo");
     c.arg("run").arg("--").args(args);
     c
