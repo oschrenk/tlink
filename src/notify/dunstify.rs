@@ -7,13 +7,19 @@ pub struct DunstifyAdapter;
 impl DunstifyAdapter {
     pub fn build_script(&self, req: &NotificationRequest) -> String {
         let appname = format!("tlink ({})", req.session);
+        let icon = if req.icon_path.is_empty() {
+            "utilities-terminal"
+        } else {
+            req.icon_path.as_str()
+        };
         format!(
             "ACTION=$(dunstify {t} {m} --action='default,Go there' \
-                --urgency=normal --icon=utilities-terminal --appname={a}); \
+                --urgency=normal --icon={i} --appname={a}); \
              [ \"$ACTION\" = \"default\" ] && tlink open {dl}",
             t = sh_quote(&req.title),
             m = sh_quote(&req.message),
             a = sh_quote(&appname),
+            i = sh_quote(icon),
             dl = sh_quote(&req.deeplink),
         )
     }
@@ -47,6 +53,7 @@ mod tests {
             location: "s > w > 0".into(),
             deeplink: "tmux://s/w/0".into(),
             session: "mysession".into(),
+            icon_path: "/tmp/tlink-logo.png".into(),
         }
     }
 
@@ -75,6 +82,24 @@ mod tests {
         let s = DunstifyAdapter.build_script(&req());
         assert!(s.contains("tlink (mysession)"));
         assert!(s.contains("--appname="));
+    }
+
+    #[test]
+    fn build_script_uses_tlink_icon_when_path_set() {
+        let s = DunstifyAdapter.build_script(&req());
+        assert!(s.contains("/tmp/tlink-logo.png"));
+        assert!(!s.contains("utilities-terminal"));
+    }
+
+    #[test]
+    fn build_script_falls_back_to_generic_icon_when_path_empty() {
+        let r = NotificationRequest {
+            icon_path: String::new(),
+            ..req()
+        };
+        let s = DunstifyAdapter.build_script(&r);
+        assert!(s.contains("utilities-terminal"));
+        assert!(!s.contains("/tmp/tlink-logo.png"));
     }
 
     #[test]

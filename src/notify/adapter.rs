@@ -6,6 +6,7 @@ pub struct NotificationRequest {
     pub location: String,
     pub deeplink: String,
     pub session: String,
+    pub icon_path: String,
 }
 
 pub trait NotificationAdapter: Send + Sync {

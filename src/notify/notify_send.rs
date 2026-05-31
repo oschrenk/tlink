@@ -5,11 +5,16 @@ pub struct NotifySendAdapter;
 
 impl NotifySendAdapter {
     pub fn build_args(&self, req: &NotificationRequest) -> Vec<String> {
+        let icon = if req.icon_path.is_empty() {
+            "utilities-terminal".to_string()
+        } else {
+            req.icon_path.clone()
+        };
         vec![
             req.title.clone(),
             format!("{}\n{}", req.message, req.location),
             "--urgency=normal".into(),
-            "--icon=utilities-terminal".into(),
+            format!("--icon={}", icon),
             "--app-name=Claude Code".into(),
             format!("--hint=string:synchronous:{}", req.session),
         ]
@@ -41,6 +46,7 @@ mod tests {
             location: "s > w > 0".into(),
             deeplink: "tmux://s/w/0".into(),
             session: "mysession".into(),
+            icon_path: "/tmp/tlink-logo.png".into(),
         }
     }
 
@@ -61,6 +67,16 @@ mod tests {
     fn build_args_has_urgency_and_icon() {
         let args = NotifySendAdapter.build_args(&req());
         assert!(args.contains(&"--urgency=normal".to_string()));
+        assert!(args.contains(&"--icon=/tmp/tlink-logo.png".to_string()));
+    }
+
+    #[test]
+    fn build_args_falls_back_to_generic_icon_when_path_empty() {
+        let r = NotificationRequest {
+            icon_path: String::new(),
+            ..req()
+        };
+        let args = NotifySendAdapter.build_args(&r);
         assert!(args.contains(&"--icon=utilities-terminal".to_string()));
     }
 
