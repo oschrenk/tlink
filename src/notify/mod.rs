@@ -1,5 +1,6 @@
 mod adapter;
 mod dunstify;
+mod icon;
 mod notify_send;
 mod osascript;
 mod terminal_notifier;
@@ -167,6 +168,15 @@ pub fn run(session: &str, window: &str, pane: &str, term: &str) -> Result<()> {
     };
     let location = format!("{} > {} > {}", session, window, pane);
 
+    let icon_path = icon::ensure_icon()
+        .unwrap_or_else(|_| {
+            // If we can't write the icon to disk, fall back to an empty path.
+            // The adapters will skip icon usage when the path is empty.
+            std::path::PathBuf::new()
+        })
+        .to_string_lossy()
+        .to_string();
+
     let config = crate::config::load().unwrap_or_default();
     let method = config.notification_method.as_deref().unwrap_or("osascript");
 
@@ -176,6 +186,7 @@ pub fn run(session: &str, window: &str, pane: &str, term: &str) -> Result<()> {
         location,
         deeplink,
         session: session.to_string(),
+        icon_path,
     };
 
     make_adapter(method).notify(&req)

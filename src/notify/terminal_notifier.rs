@@ -6,7 +6,7 @@ pub struct TerminalNotifierAdapter;
 impl TerminalNotifierAdapter {
     /// Returns the argument list for terminal-notifier (without the binary name).
     pub fn build_args(&self, req: &NotificationRequest) -> Vec<String> {
-        let args = vec![
+        let mut args = vec![
             "-title".into(),
             req.title.clone(),
             "-subtitle".into(),
@@ -22,6 +22,10 @@ impl TerminalNotifierAdapter {
             "-open".into(),
             req.deeplink.clone(),
         ];
+        if !req.icon_path.is_empty() {
+            args.push("-appIcon".into());
+            args.push(req.icon_path.clone());
+        }
         args
     }
 }
@@ -54,6 +58,7 @@ mod tests {
             location: "s > w > 0".into(),
             deeplink: "tmux://s/w/0".into(),
             session: "s".into(),
+            icon_path: "/tmp/tlink-logo.png".into(),
         }
     }
 
@@ -90,6 +95,23 @@ mod tests {
         let args = TerminalNotifierAdapter.build_args(&req());
         let idx = args.iter().position(|a| a == "-group").unwrap();
         assert_eq!(args[idx + 1], "s");
+    }
+
+    #[test]
+    fn build_args_includes_app_icon_when_path_set() {
+        let args = TerminalNotifierAdapter.build_args(&req());
+        let idx = args.iter().position(|a| a == "-appIcon").unwrap();
+        assert_eq!(args[idx + 1], "/tmp/tlink-logo.png");
+    }
+
+    #[test]
+    fn build_args_skips_app_icon_when_path_empty() {
+        let r = NotificationRequest {
+            icon_path: String::new(),
+            ..req()
+        };
+        let args = TerminalNotifierAdapter.build_args(&r);
+        assert!(!args.contains(&"-appIcon".to_string()));
     }
 
     #[test]
