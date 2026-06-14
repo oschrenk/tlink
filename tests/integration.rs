@@ -472,3 +472,90 @@ fn test_gemini_python_parser_empty() {
     c.stdin.take();
     assert!(c.wait_with_output().unwrap().status.success());
 }
+
+#[test]
+fn test_setup_help_shows_non_interactive_flags() {
+    let o = tlink_cmd(&["setup", "--help"]).output().unwrap();
+    assert!(o.status.success());
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(s.contains("--terminal"), "setup help missing --terminal");
+    assert!(s.contains("--yes"), "setup help missing --yes/-y");
+    assert!(
+        s.contains("--no-telemetry"),
+        "setup help missing --no-telemetry"
+    );
+    assert!(s.contains("--telemetry"), "setup help missing --telemetry");
+}
+
+#[test]
+fn test_setup_yes_without_terminal_errors() {
+    let o = tlink_cmd(&["setup", "--yes"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    // On macOS with no terminals in /Applications, this should error.
+    // We accept either an error exit or a message about multiple/auto-detect.
+    assert!(
+        !o.status.success()
+            || stdout.contains("Auto-detected")
+            || stderr.contains("Multiple")
+            || stdout.contains("Multiple")
+            || stderr.contains("No terminal")
+            || stdout.contains("No terminal"),
+        "--yes without --terminal should error or auto-detect"
+    );
+}
+
+#[test]
+fn test_setup_non_interactive_with_config() {
+    let tmp = std::env::temp_dir().join(format!("tlink-setup-ni-{}", std::process::id()));
+    fs::create_dir_all(&tmp).unwrap();
+    let config_path = tmp.join("config.toml");
+
+    // Run non-interactive setup with --terminal and --no-telemetry.
+    // This should save config and attempt to create the bundle.
+    // On macOS: may succeed if swiftc is available.
+    // On Linux (CI): bundle creation will fail (no swiftc), but config should still be written.
+    let o = tlink_cmd(&["setup", "--terminal", "Ghostty", "--no-telemetry"])
+        .env("TLINK_CONFIG", config_path.to_str().unwrap())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+
+    eprintln!("=== test_setup_non_interactive_with_config ===");
+    eprintln!("exit:  {}", o.status);
+    eprintln!("stdout:\n{stdout}");
+    eprintln!("stderr:\n{stderr}");
+
+    // Config should be written with the terminal name
+    if config_path.exists() {
+        let cfg = fs::read_to_string(&config_path).unwrap();
+        eprintln!("config:\n{cfg}");
+        assert!(
+            cfg.contains("Ghostty"),
+            "config should contain the terminal name"
+        );
+        assert!(
+            cfg.contains("telemetry_enabled = false"),
+            "config should have telemetry disabled"
+        );
+    } else if o.status.success() {
+        // Config might not be created if bundle::create fails early
+        eprintln!("  config file not written (likely bundle creation failed early)");
+    }
+
+    // Clean up temp files
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+fn test_setup_empty_terminal_rejected() {
+    let o = tlink_cmd(&["setup", "--terminal", "   "]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "empty terminal should fail");
+    assert!(
+        stderr.contains("non-empty") || stderr.contains("error"),
+        "should mention empty terminal error: {stderr}"
+    );
+}

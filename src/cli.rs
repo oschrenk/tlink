@@ -10,7 +10,22 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Interactive TUI wizard: select terminal, register tmux:// URI scheme
-    Setup,
+    ///
+    /// Use --terminal, --yes, --telemetry/--no-telemetry to run non-interactively.
+    Setup {
+        /// Terminal emulator (e.g. iTerm2, Ghostty, Kitty, WezTerm, Terminal)
+        #[arg(long, value_name = "NAME")]
+        terminal: Option<String>,
+        /// Skip all prompts (non-interactive mode). Requires --terminal.
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Enable anonymous telemetry
+        #[arg(long, conflicts_with = "no_telemetry")]
+        telemetry: bool,
+        /// Disable anonymous telemetry
+        #[arg(long, conflicts_with = "telemetry")]
+        no_telemetry: bool,
+    },
     /// Handle a tmux:// URI (invoked by the OS when a deeplink is clicked)
     Open {
         /// The tmux:// URI, e.g. tmux://mysession/0/1

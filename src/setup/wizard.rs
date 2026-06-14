@@ -136,7 +136,7 @@ pub fn next_state(state: WizardState, key: KeyCode) -> WizardState {
     }
 }
 
-fn verify_scheme() -> bool {
+pub fn verify_scheme() -> bool {
     std::process::Command::new(
         "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
     )
