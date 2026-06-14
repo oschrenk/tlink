@@ -211,10 +211,10 @@ pi.on("agent_end", async (event, ctx) => {
     out.push_str("  const { spawn } = require(\"child_process\");\n");
     out.push_str("  let session = \"\", window = \"\", pane = \"\", term = \"\";\n");
     out.push_str("  try {\n");
-    out.push_str("    session = execSync('tmux display-message -p \"#{session_name}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
-    out.push_str("    window  = execSync('tmux display-message -p \"#{window_name}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
-    out.push_str("    pane    = execSync('tmux display-message -p \"#{pane_index}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
-    out.push_str("    term    = execSync('tmux display-message -p \"#{client_termtype}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    session = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{session_name}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    window  = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{window_name}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    pane    = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{pane_index}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    term    = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{client_termtype}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
     out.push_str("  } catch {\n");
     out.push_str("    session = \"no-tmux\";\n");
     out.push_str("    window  = \"0\";\n");
