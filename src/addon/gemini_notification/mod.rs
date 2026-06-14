@@ -218,9 +218,9 @@ pub fn uninstall() -> Result<()> {
 /// The `--source gemini` flag tells tlink which agent adapter to use.
 pub fn hook_script() -> &'static str {
     r##"#!/bin/bash
-SESSION=$(tmux display-message -p "#{session_name}" 2>/dev/null) || exit 0
-WINDOW=$(tmux display-message -p "#{window_name}" 2>/dev/null) || exit 0
-PANE=$(tmux display-message -p "#{pane_index}" 2>/dev/null) || exit 0
+SESSION=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}" 2>/dev/null) || exit 0
+WINDOW=$(tmux display-message -p -t "$TMUX_PANE" "#{window_name}" 2>/dev/null) || exit 0
+PANE=$(tmux display-message -p -t "$TMUX_PANE" "#{pane_index}" 2>/dev/null) || exit 0
 [ -z "$SESSION" ] && exit 0
 exec tlink notify --source gemini --session "$SESSION" --window "$WINDOW" --pane "$PANE"
 "##
@@ -306,11 +306,11 @@ fn generate_hook_script(method: &NotifMethod) -> String {
 # tlink gemini-notification hook
 # method: {method_label}
 
-SESSION=$(tmux display-message -p "#{{session_name}}" 2>/dev/null) || exit 0
-WINDOW=$(tmux display-message -p "#{{window_name}}" 2>/dev/null) || exit 0
-PANE=$(tmux display-message -p "#{{pane_index}}" 2>/dev/null) || exit 0
+SESSION=$(tmux display-message -p -t "$TMUX_PANE" "#{{session_name}}" 2>/dev/null) || exit 0
+WINDOW=$(tmux display-message -p -t "$TMUX_PANE" "#{{window_name}}" 2>/dev/null) || exit 0
+PANE=$(tmux display-message -p -t "$TMUX_PANE" "#{{pane_index}}" 2>/dev/null) || exit 0
 [ -z "$SESSION" ] && exit 0
-TERMTYPE=$(tmux display-message -p "#{{client_termtype}}" 2>/dev/null || echo "")
+TERMTYPE=$(tmux display-message -p -t "$TMUX_PANE" "#{{client_termtype}}" 2>/dev/null || echo "")
 
 INPUT=$(cat)
 eval "$(printf '%s' "$INPUT" | python3 -c "
