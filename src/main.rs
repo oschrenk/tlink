@@ -48,7 +48,17 @@ fn run() -> Result<()> {
         telemetry::record_event("command.run", Some(props));
     }
     let result = match &cli.command {
-        Commands::Setup => setup::run(),
+        Commands::Setup {
+            terminal,
+            yes,
+            telemetry,
+            no_telemetry,
+        } => setup::run(setup::SetupArgs {
+            terminal: terminal.clone(),
+            yes: *yes,
+            telemetry: *telemetry,
+            no_telemetry: *no_telemetry,
+        }),
         Commands::Open { .. } => open::run(match &cli.command {
             Commands::Open { uri } => uri,
             _ => unreachable!(),
