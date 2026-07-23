@@ -59,6 +59,14 @@ Links target three levels of specificity:
 | Session + window | `tmux://work/editor` | Switches to window `editor` in `work` |
 | Session + window + pane | `tmux://work/editor/0` | Switches to pane 0 in `editor` |
 
+**Custom server socket:** if your tmux server runs on a named socket (`tmux -L <name>`), append `?socket=<name>` and tlink passes it through as `tmux -L <name>` on every command:
+
+```
+tmux://work/editor/0?socket=dev
+```
+
+The notification addons detect the socket automatically, so links they generate already point at the right server.
+
 If you're already in tmux, the current pane switches to the target and flashes green. A status-bar toast confirms the jump:
 
 ```

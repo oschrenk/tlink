@@ -73,6 +73,10 @@ pub enum Commands {
         /// Terminal emulator detected from tmux client_termtype (e.g. "ghostty 1.2.3")
         #[arg(long, default_value = "")]
         term: String,
+        /// tmux server socket name (basename of #{socket_path}), passed through
+        /// to the deeplink as ?socket= and on to `tmux -L <socket>`
+        #[arg(long, default_value = "")]
+        socket: String,
         /// Agent source: pi, claude, gemini, or codex (defaults to claude)
         #[arg(long, default_value = "")]
         source: String,

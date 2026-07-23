@@ -209,18 +209,24 @@ pi.on("agent_end", async (event, ctx) => {
     out.push_str("function spawn_notify(event: string, message: string, extra: Record<string, any>): void {\n");
     out.push_str("  const execSync = require(\"child_process\").execSync;\n");
     out.push_str("  const { spawn } = require(\"child_process\");\n");
-    out.push_str("  let session = \"\", window = \"\", pane = \"\", term = \"\";\n");
+    out.push_str(
+        "  let session = \"\", window = \"\", pane = \"\", term = \"\", socketPath = \"\";\n",
+    );
     out.push_str("  try {\n");
-    out.push_str("    session = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{session_name}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
-    out.push_str("    window  = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{window_name}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
-    out.push_str("    pane    = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{pane_index}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
-    out.push_str("    term    = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{client_termtype}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    session    = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{session_name}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    window     = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{window_name}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    pane       = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{pane_index}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    term       = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{client_termtype}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
+    out.push_str("    socketPath = execSync('tmux display-message -p -t \"$TMUX_PANE\" \"#{socket_path}\" 2>/dev/null', { encoding: \"utf8\" }).trim();\n");
     out.push_str("  } catch {\n");
     out.push_str("    session = \"no-tmux\";\n");
     out.push_str("    window  = \"0\";\n");
     out.push_str("    pane    = \"0\";\n");
     out.push_str("  }\n");
     out.push_str("  const termName = term.split(/\\s+/)[0] || \"\";\n");
+    out.push_str(
+        "  const socketName = socketPath ? require(\"path\").basename(socketPath) : \"\";\n",
+    );
     out.push('\n');
     out.push_str("  const payload = JSON.stringify({\n");
     out.push_str("    source: \"pi\",\n");
@@ -230,7 +236,7 @@ pi.on("agent_end", async (event, ctx) => {
     out.push_str("  });\n\n");
     out.push_str("  // Use spawn with stdin pipe — avoids shell escaping issues\n");
     out.push_str("  // with single quotes, backticks, etc. in the body text.\n");
-    out.push_str("  const child = spawn(\"tlink\", [\"notify\", \"--session\", session, \"--window\", window, \"--pane\", pane, \"--term\", termName, \"--source\", \"pi\"], {\n");
+    out.push_str("  const child = spawn(\"tlink\", [\"notify\", \"--session\", session, \"--window\", window, \"--pane\", pane, \"--term\", termName, \"--socket\", socketName, \"--source\", \"pi\"], {\n");
     out.push_str("    stdio: [\"pipe\", \"pipe\", \"pipe\"],\n");
     out.push_str("  });\n");
     out.push_str("  child.stdin.write(payload);\n");

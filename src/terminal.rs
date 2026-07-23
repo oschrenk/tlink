@@ -39,9 +39,14 @@ pub fn from_name(name: &str) -> TerminalAdapter {
 
 /// Try to detect the terminal emulator from an *attached* tmux client.
 /// Reads `client_termtype` for the first client attached to any session.
-/// Returns `None` if there are no attached clients.
-pub fn detect_from_running_tmux() -> Option<TerminalAdapter> {
-    let output = Command::new("tmux")
+/// Returns `None` if there are no attached clients. `socket` scopes the query
+/// to the same `tmux -L <socket>` server the deeplink targets.
+pub fn detect_from_running_tmux(socket: &Option<String>) -> Option<TerminalAdapter> {
+    let mut cmd = Command::new("tmux");
+    if let Some(name) = socket {
+        cmd.args(["-L", name]);
+    }
+    let output = cmd
         .args(["list-clients", "-F", "#{client_termtype}"])
         .output()
         .ok()?;
@@ -74,39 +79,46 @@ impl TerminalAdapter {
 
     /// Tell the terminal to open a new window/tab running `tmux attach-session -t target`.
     /// Used when no tmux client is attached (truly detached), so switch-client won't work.
-    pub fn attach_tmux(&self, target: &str) -> Result<()> {
+    /// `socket` carries the `?socket=` name so the fallback attaches to the same
+    /// `tmux -L <socket>` server the deeplink points at, not the default server.
+    pub fn attach_tmux(&self, target: &str, socket: &Option<String>) -> Result<()> {
+        // `-L <socket> ` prefix for the shell/AppleScript command strings.
+        let sock_str = match socket {
+            Some(s) => format!("-L {} ", s),
+            None => String::new(),
+        };
+        // `["-L", socket]` args to splice into argv-based launchers.
+        let sock_args: Vec<&str> = match socket {
+            Some(s) => vec!["-L", s],
+            None => vec![],
+        };
         match self.name.as_str() {
             "iTerm2" => {
                 let script = format!(
-                    r#"tell application "iTerm2" to create window with default profile command "tmux attach-session -t {}""#,
-                    target
+                    r#"tell application "iTerm2" to create window with default profile command "tmux {}attach-session -t {}""#,
+                    sock_str, target
                 );
                 Command::new("osascript").args(["-e", &script]).status()?;
             }
             "Terminal" | "Terminal.app" => {
                 let script = format!(
-                    r#"tell application "Terminal" to do script "tmux attach-session -t {}""#,
-                    target
+                    r#"tell application "Terminal" to do script "tmux {}attach-session -t {}""#,
+                    sock_str, target
                 );
                 Command::new("osascript").args(["-e", &script]).status()?;
             }
             "WezTerm" => {
                 Command::new("wezterm")
-                    .args(["cli", "spawn", "--", "tmux", "attach-session", "-t", target])
+                    .args(["cli", "spawn", "--", "tmux"])
+                    .args(&sock_args)
+                    .args(["attach-session", "-t", target])
                     .status()?;
             }
             "Kitty" => {
                 Command::new("kitty")
-                    .args([
-                        "@",
-                        "launch",
-                        "--type=tab",
-                        "--",
-                        "tmux",
-                        "attach-session",
-                        "-t",
-                        target,
-                    ])
+                    .args(["@", "launch", "--type=tab", "--", "tmux"])
+                    .args(&sock_args)
+                    .args(["attach-session", "-t", target])
                     .status()?;
             }
             "Ghostty" => {

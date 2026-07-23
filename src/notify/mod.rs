@@ -32,27 +32,40 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-fn build_deeplink(session: &str, window: &str, pane: &str, term: &str) -> String {
+fn build_deeplink(session: &str, window: &str, pane: &str, term: &str, socket: &str) -> String {
     let s = percent_encode(session);
     let w = percent_encode(window);
     let p = percent_encode(pane);
-    if term.is_empty() {
-        format!("tmux://{}/{}/{}", s, w, p)
-    } else {
+
+    let mut params: Vec<String> = Vec::new();
+    if !term.is_empty() {
         let term_name = term.split_whitespace().next().unwrap_or(term);
-        format!(
-            "tmux://{}/{}/{}?term={}",
-            s,
-            w,
-            p,
-            percent_encode(term_name)
-        )
+        params.push(format!("term={}", percent_encode(term_name)));
     }
+    // Skip the default socket: `tmux -L default` is identical to no `-L`, so
+    // omitting it keeps links for the common case byte-for-byte unchanged.
+    if !socket.is_empty() && socket != "default" {
+        params.push(format!("socket={}", percent_encode(socket)));
+    }
+
+    let mut uri = format!("tmux://{}/{}/{}", s, w, p);
+    if !params.is_empty() {
+        uri.push('?');
+        uri.push_str(&params.join("&"));
+    }
+    uri
 }
 
 /// Run a notification: read hook JSON from stdin, resolve via the correct
 /// agent adapter, and fire a desktop notification.
-pub fn run(session: &str, window: &str, pane: &str, term: &str, source: &str) -> Result<()> {
+pub fn run(
+    session: &str,
+    window: &str,
+    pane: &str,
+    term: &str,
+    socket: &str,
+    source: &str,
+) -> Result<()> {
     let mut stdin = String::new();
     std::io::stdin().read_to_string(&mut stdin)?;
 
@@ -64,7 +77,7 @@ pub fn run(session: &str, window: &str, pane: &str, term: &str, source: &str) ->
     }
     let (title, message, _choices) = hooks::resolve(&payload);
 
-    let deeplink = build_deeplink(session, window, pane, term);
+    let deeplink = build_deeplink(session, window, pane, term, socket);
     let location = format!("{} > {} > {}", session, window, pane);
 
     let icon_path = icon::ensure_icon()
@@ -146,31 +159,62 @@ mod tests {
 
     #[test]
     fn deeplink_plain_session() {
-        let uri = build_deeplink("mysession", "0", "1", "");
+        let uri = build_deeplink("mysession", "0", "1", "", "");
         assert_eq!(uri, "tmux://mysession/0/1");
     }
 
     #[test]
     fn deeplink_encodes_slash_in_session() {
-        let uri = build_deeplink("work/backend", "0", "1", "");
+        let uri = build_deeplink("work/backend", "0", "1", "", "");
         assert_eq!(uri, "tmux://work%2Fbackend/0/1");
     }
 
     #[test]
     fn deeplink_encodes_slash_in_window() {
-        let uri = build_deeplink("s", "win/name", "0", "");
+        let uri = build_deeplink("s", "win/name", "0", "", "");
         assert_eq!(uri, "tmux://s/win%2Fname/0");
     }
 
     #[test]
     fn deeplink_encodes_space_in_session() {
-        let uri = build_deeplink("my session", "0", "0", "");
+        let uri = build_deeplink("my session", "0", "0", "", "");
         assert_eq!(uri, "tmux://my%20session/0/0");
     }
 
     #[test]
     fn deeplink_with_term_encodes_segments_and_term() {
-        let uri = build_deeplink("work/backend", "0", "0", "ghostty 1.2.3");
+        let uri = build_deeplink("work/backend", "0", "0", "ghostty 1.2.3", "");
         assert_eq!(uri, "tmux://work%2Fbackend/0/0?term=ghostty");
+    }
+
+    #[test]
+    fn deeplink_with_socket() {
+        let uri = build_deeplink("mysession", "0", "1", "", "work");
+        assert_eq!(uri, "tmux://mysession/0/1?socket=work");
+    }
+
+    #[test]
+    fn deeplink_with_term_and_socket() {
+        let uri = build_deeplink("s", "0", "1", "ghostty 1.2.3", "work");
+        assert_eq!(uri, "tmux://s/0/1?term=ghostty&socket=work");
+    }
+
+    #[test]
+    fn deeplink_default_socket_omitted() {
+        // `-L default` == no `-L`, so the common case stays unchanged.
+        let uri = build_deeplink("mysession", "0", "1", "", "default");
+        assert_eq!(uri, "tmux://mysession/0/1");
+    }
+
+    #[test]
+    fn deeplink_empty_socket_omitted() {
+        let uri = build_deeplink("mysession", "0", "1", "", "");
+        assert_eq!(uri, "tmux://mysession/0/1");
+    }
+
+    #[test]
+    fn deeplink_encodes_socket() {
+        let uri = build_deeplink("s", "0", "1", "", "my sock");
+        assert_eq!(uri, "tmux://s/0/1?socket=my%20sock");
     }
 }

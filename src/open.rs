@@ -21,6 +21,20 @@ pub struct TmuxTarget {
     pub pane: Option<String>,
     /// Terminal emulator from `?term=` query param in the URI
     pub term: Option<String>,
+    /// tmux server socket name from `?socket=` query param, passed through as
+    /// `tmux -L <socket>`. `None` means the default server.
+    pub socket: Option<String>,
+}
+
+/// Build a `tmux` command, injecting `-L <socket>` before the subcommand when
+/// the URI carried a `?socket=` param. Mirrors `tmux -L <socket-name>`, which
+/// selects an alternate server socket. `None` targets the default server.
+fn tmux(socket: &Option<String>) -> Command {
+    let mut cmd = Command::new("tmux");
+    if let Some(name) = socket {
+        cmd.args(["-L", name]);
+    }
+    cmd
 }
 
 /// Simple percent-decode: only handles %XX hex sequences.
@@ -47,15 +61,24 @@ pub fn parse_uri(uri: &str) -> Result<TmuxTarget> {
         .strip_prefix("tmux://")
         .ok_or_else(|| anyhow::anyhow!("URI must start with tmux://, got: {uri}"))?;
 
-    // Split off query parameter if present
-    let (path_part, term) = if let Some(pos) = stripped.find('?') {
-        let query = &stripped[pos + 1..];
-        let path = &stripped[..pos];
-        let t = query.strip_prefix("term=").map(percent_decode);
-        (path, t)
-    } else {
-        (stripped, None)
+    // Split off the query string (if any) and parse its `&`-separated params.
+    // Order-independent, so `?term=x&socket=y` and `?socket=y&term=x` both work.
+    let (path_part, query) = match stripped.split_once('?') {
+        Some((path, q)) => (path, Some(q)),
+        None => (stripped, None),
     };
+
+    let mut term = None;
+    let mut socket = None;
+    if let Some(q) = query {
+        for pair in q.split('&') {
+            if let Some(v) = pair.strip_prefix("term=") {
+                term = Some(percent_decode(v));
+            } else if let Some(v) = pair.strip_prefix("socket=") {
+                socket = Some(percent_decode(v)).filter(|s| !s.is_empty());
+            }
+        }
+    }
 
     let parts: Vec<&str> = path_part.splitn(3, '/').collect();
     let seg = |i: usize| -> Option<String> {
@@ -70,6 +93,7 @@ pub fn parse_uri(uri: &str) -> Result<TmuxTarget> {
         window: seg(1),
         pane: seg(2),
         term,
+        socket,
     })
 }
 
@@ -92,7 +116,7 @@ fn resolve_adapter(target: &TmuxTarget) -> Option<crate::terminal::TerminalAdapt
 
     // Priority 2: detect from a running tmux client
     log!("resolve_adapter: trying detect_from_running_tmux()");
-    if let Some(adapter) = crate::terminal::detect_from_running_tmux() {
+    if let Some(adapter) = crate::terminal::detect_from_running_tmux(&target.socket) {
         log!(
             "resolve_adapter: detected from tmux client: {}",
             adapter.name
@@ -118,11 +142,12 @@ pub fn run(uri: &str) -> Result<()> {
 
     let target = parse_uri(uri)?;
     log!(
-        "open: parsed session={:?} window={:?} pane={:?} term={:?}",
+        "open: parsed session={:?} window={:?} pane={:?} term={:?} socket={:?}",
         target.session,
         target.window,
         target.pane,
-        target.term
+        target.term,
+        target.socket
     );
 
     // Resolve terminal adapter from best available source.
@@ -164,7 +189,7 @@ fn execute_switch(
     // was backgrounded). If it fails the session is truly detached — fall back to
     // asking the terminal to run attach-session in a new window.
     log!("execute_switch: attempting `tmux switch-client -t {tmux_target}`");
-    let switched = Command::new("tmux")
+    let switched = tmux(&target.socket)
         .args(["switch-client", "-t", &tmux_target])
         .status()
         .map(|s| s.success())
@@ -179,7 +204,7 @@ fn execute_switch(
                 a.name,
                 tmux_target
             );
-            let _ = a.attach_tmux(&tmux_target);
+            let _ = a.attach_tmux(&tmux_target, &target.socket);
         } else {
             log!("execute_switch: no terminal adapter configured — bailing");
             bail!("tmux switch-client failed and no terminal adapter configured");
@@ -190,7 +215,7 @@ fn execute_switch(
         // it attaches the current terminal to the tmux session.
         // -d detaches any existing client so we can attach.
         log!("execute_switch: trying direct attach-session");
-        if Command::new("tmux")
+        if tmux(&target.socket)
             .args(["attach-session", "-d", "-t", &tmux_target])
             .status()
             .map(|s| s.success())
@@ -213,7 +238,7 @@ fn execute_switch(
         _ => format!("tlink → {session}"),
     };
     log!("execute_switch: displaying toast '{label}'");
-    let _ = Command::new("tmux")
+    let _ = tmux(&target.socket)
         .args(["display-message", "-d", "2000", "-t", &tmux_target, &label])
         .status();
 
@@ -224,7 +249,7 @@ fn execute_switch(
         None => session.to_string(),
     };
     log!("execute_switch: flashing border for {win_target}");
-    let _ = Command::new("tmux")
+    let _ = tmux(&target.socket)
         .args([
             "set-option",
             "-t",
@@ -233,9 +258,14 @@ fn execute_switch(
             "fg=colour46,bold",
         ])
         .status();
+    // Same `-L <socket>` needs to reach the deferred reset, which runs via `sh`.
+    let sock_flag = match &target.socket {
+        Some(s) => format!("-L '{}' ", s),
+        None => String::new(),
+    };
     let reset = format!(
-        "sleep 1.5 && tmux set-option -ut '{}' pane-active-border-style",
-        win_target
+        "sleep 1.5 && tmux {}set-option -ut '{}' pane-active-border-style",
+        sock_flag, win_target
     );
     let _ = Command::new("sh").args(["-c", &reset]).spawn();
 
@@ -310,6 +340,44 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_socket() {
+        let t = parse_uri("tmux://mysession/0/1?socket=work").unwrap();
+        assert_eq!(t.session.as_deref(), Some("mysession"));
+        assert_eq!(t.pane.as_deref(), Some("1"));
+        assert_eq!(t.socket.as_deref(), Some("work"));
+        assert!(t.term.is_none());
+    }
+
+    #[test]
+    fn test_parse_socket_and_term_any_order() {
+        let a = parse_uri("tmux://s/0/1?term=ghostty&socket=work").unwrap();
+        assert_eq!(a.term.as_deref(), Some("ghostty"));
+        assert_eq!(a.socket.as_deref(), Some("work"));
+
+        let b = parse_uri("tmux://s/0/1?socket=work&term=ghostty").unwrap();
+        assert_eq!(b.term.as_deref(), Some("ghostty"));
+        assert_eq!(b.socket.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn test_parse_no_socket() {
+        let t = parse_uri("tmux://mysession/0/1?term=ghostty").unwrap();
+        assert!(t.socket.is_none());
+    }
+
+    #[test]
+    fn test_parse_empty_socket_is_none() {
+        let t = parse_uri("tmux://mysession/0/1?socket=").unwrap();
+        assert!(t.socket.is_none());
+    }
+
+    #[test]
+    fn test_parse_socket_percent_decoded() {
+        let t = parse_uri("tmux://mysession/0/1?socket=my%20sock").unwrap();
+        assert_eq!(t.socket.as_deref(), Some("my sock"));
+    }
+
+    #[test]
     fn test_parse_session_with_encoded_slash() {
         let t = parse_uri("tmux://work%2Fbackend").unwrap();
         assert_eq!(t.session.as_deref(), Some("work/backend"));
@@ -366,6 +434,7 @@ mod tests {
             window: None,
             pane: None,
             term: None,
+            socket: None,
         };
         // single switch-client to session
         assert_eq!(
@@ -385,6 +454,7 @@ mod tests {
             window: Some("work".into()),
             pane: None,
             term: None,
+            socket: None,
         };
         let target = format!("{}:{}", t.session.unwrap(), t.window.unwrap());
         assert_eq!(target, "dorv:work");
@@ -397,6 +467,7 @@ mod tests {
             window: Some("work".into()),
             pane: Some("1".into()),
             term: None,
+            socket: None,
         };
         let target = format!(
             "{}:{}.{}",
