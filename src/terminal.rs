@@ -37,11 +37,38 @@ pub fn from_name(name: &str) -> TerminalAdapter {
     }
 }
 
-/// Try to detect the terminal emulator from an *attached* tmux client.
-/// Reads `client_termtype` for the first client attached to any session.
-/// Returns `None` if there are no attached clients.
-pub fn detect_from_running_tmux() -> Option<TerminalAdapter> {
-    let output = Command::new("tmux")
+/// `tmux` command, with `-L <socket>` prepended when one was given.
+pub fn tmux(socket: Option<&str>) -> Command {
+    let mut cmd = Command::new("tmux");
+    if let Some(name) = socket {
+        cmd.args(["-L", name]);
+    }
+    cmd
+}
+
+/// Shell-quote a word unless it's plain enough to not need it.
+fn sh_word(s: &str) -> String {
+    let simple = !s.is_empty()
+        && s.bytes().all(|b| {
+            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/' | b':' | b'=')
+        });
+    if simple {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
+}
+
+/// Escape for an AppleScript double-quoted string.
+fn applescript_escape(s: &str) -> String {
+    s.replace('\\', r"\\").replace('"', r#"\""#)
+}
+
+/// Detect the terminal emulator from an attached tmux client's
+/// `client_termtype`. `None` if no client is attached. `socket` scopes the
+/// query to the server the deeplink targets.
+pub fn detect_from_running_tmux(socket: Option<&str>) -> Option<TerminalAdapter> {
+    let output = tmux(socket)
         .args(["list-clients", "-F", "#{client_termtype}"])
         .output()
         .ok()?;
@@ -74,39 +101,44 @@ impl TerminalAdapter {
 
     /// Tell the terminal to open a new window/tab running `tmux attach-session -t target`.
     /// Used when no tmux client is attached (truly detached), so switch-client won't work.
-    pub fn attach_tmux(&self, target: &str) -> Result<()> {
+    /// `socket` keeps the fallback on the same `tmux -L` server as the deeplink.
+    pub fn attach_tmux(&self, target: &str, socket: Option<&str>) -> Result<()> {
+        // One argv for everyone: spliced in directly by argv launchers,
+        // shell-quoted for the AppleScript ones.
+        let attach_args: Vec<&str> = match socket {
+            Some(s) => vec!["tmux", "-L", s, "attach-session", "-t", target],
+            None => vec!["tmux", "attach-session", "-t", target],
+        };
+        let attach_cmd = attach_args
+            .iter()
+            .map(|a| sh_word(a))
+            .collect::<Vec<_>>()
+            .join(" ");
         match self.name.as_str() {
             "iTerm2" => {
                 let script = format!(
-                    r#"tell application "iTerm2" to create window with default profile command "tmux attach-session -t {}""#,
-                    target
+                    r#"tell application "iTerm2" to create window with default profile command "{}""#,
+                    applescript_escape(&attach_cmd)
                 );
                 Command::new("osascript").args(["-e", &script]).status()?;
             }
             "Terminal" | "Terminal.app" => {
                 let script = format!(
-                    r#"tell application "Terminal" to do script "tmux attach-session -t {}""#,
-                    target
+                    r#"tell application "Terminal" to do script "{}""#,
+                    applescript_escape(&attach_cmd)
                 );
                 Command::new("osascript").args(["-e", &script]).status()?;
             }
             "WezTerm" => {
                 Command::new("wezterm")
-                    .args(["cli", "spawn", "--", "tmux", "attach-session", "-t", target])
+                    .args(["cli", "spawn", "--"])
+                    .args(&attach_args)
                     .status()?;
             }
             "Kitty" => {
                 Command::new("kitty")
-                    .args([
-                        "@",
-                        "launch",
-                        "--type=tab",
-                        "--",
-                        "tmux",
-                        "attach-session",
-                        "-t",
-                        target,
-                    ])
+                    .args(["@", "launch", "--type=tab", "--"])
+                    .args(&attach_args)
                     .status()?;
             }
             "Ghostty" => {
@@ -149,5 +181,25 @@ mod tests {
     fn test_terminal_app_alias_names() {
         let _ = from_name("Terminal");
         let _ = from_name("Terminal.app");
+    }
+
+    #[test]
+    fn test_sh_word_simple_passthrough() {
+        assert_eq!(sh_word("tmux"), "tmux");
+        assert_eq!(sh_word("sess:win.1"), "sess:win.1");
+        assert_eq!(sh_word("-L"), "-L");
+    }
+
+    #[test]
+    fn test_sh_word_quotes_spaces_and_metachars() {
+        assert_eq!(sh_word("my sock"), "'my sock'");
+        assert_eq!(sh_word("a;rm -rf ~"), "'a;rm -rf ~'");
+        assert_eq!(sh_word("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn test_applescript_escape() {
+        assert_eq!(applescript_escape(r#"say "hi""#), r#"say \"hi\""#);
+        assert_eq!(applescript_escape(r"back\slash"), r"back\\slash");
     }
 }

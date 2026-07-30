@@ -359,7 +359,8 @@ SESSION=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}" 2>/dev/null)
 WINDOW=$(tmux display-message -p -t "$TMUX_PANE" "#{window_name}" 2>/dev/null) || exit 0
 PANE=$(tmux display-message -p -t "$TMUX_PANE" "#{pane_index}" 2>/dev/null) || exit 0
 [ -z "$SESSION" ] && exit 0
-exec tlink notify --source claude --session "$SESSION" --window "$WINDOW" --pane "$PANE"
+SOCKET=$(basename "$(tmux display-message -p -t "$TMUX_PANE" "#{socket_path}" 2>/dev/null)" 2>/dev/null)
+exec tlink notify --source claude --session "$SESSION" --window "$WINDOW" --pane "$PANE" --socket "$SOCKET"
 "##
 }
 
